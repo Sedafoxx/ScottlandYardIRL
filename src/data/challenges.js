@@ -1,0 +1,90 @@
+/**
+ * Each challenge is an object with:
+ *   challenge    {string}  — the task description shown to the team
+ *   requiresText {boolean} — if true, team must submit a text answer alongside the photo
+ *   textPrompt   {string}  — the label shown above the text input (only when requiresText)
+ */
+
+export const CHALLENGES = {
+  easy: [
+    { challenge: 'Take a selfie with a street musician — their permission required. Both of you must be visible.' },
+    { challenge: 'Ask a stranger to point you in a direction — selfie with both of you pointing the same way.' },
+    { challenge: 'Find a statue and mirror its exact pose — selfie next to it. You must be visible.' },
+    { challenge: 'Take a selfie with a stranger\'s dog — owner\'s permission required. You and the dog must be visible.' },
+    { challenge: 'Find a busker and throw some coins in their hat — selfie together after. Both must be visible.' },
+    { challenge: 'Ask a stranger to give you a thumbs up — selfie together. Both must be visible.' },
+    { challenge: 'Take a selfie in front of a pharmacy with the Apotheke sign clearly visible.' },
+    { challenge: 'Take a selfie on a bridge. You must be clearly visible.' },
+    { challenge: 'Find a public bicycle (Citybike Vienna) and take a selfie next to it.' },
+    { challenge: 'Find a street art piece or graffiti mural and take a selfie in front of it.' },
+    { challenge: 'Take a selfie in front of a hotel. You must be visible.' },
+    { challenge: 'Find a park bench and take a selfie sitting on it with the most dramatic expression you can manage.' },
+    { challenge: 'Take a selfie with a tram or bus clearly visible behind you.' },
+    { challenge: 'Recreate a pose from an advertisement or poster visible nearby — selfie next to the original.' },
+    { challenge: 'Find a red vehicle (car, tram, or van) and take a selfie next to it.' },
+    { challenge: 'Take a selfie in front of a supermarket. You must be visible.' },
+    { challenge: 'Take a selfie in front of a U-Bahn station entrance. You must be visible.' },
+    { challenge: 'Find a Würstelstand and take a selfie in front of it. You must be visible.' },
+    { challenge: 'Take a selfie in front of a church or cathedral. You must be visible.' },
+    { challenge: 'Take a selfie next to a street lamp. You must be visible.' },
+  ],
+
+  medium: [
+    { challenge: 'Take a selfie with a cyclist — ask them to stop for a moment. Both must be visible.' },
+    { challenge: 'Get a stranger to give you a fist bump — capture it mid-bump in a selfie. Both must be visible.' },
+    { challenge: 'Ask a stranger to give you a high five with both hands simultaneously — selfie mid-five.' },
+    { challenge: 'Find someone at a Würstelstand and take a selfie with their sausage (with permission). You and the sausage must be visible.' },
+    { challenge: 'Find someone reading a book or newspaper — selfie pretending to read over their shoulder (with permission).' },
+    {
+      challenge: 'Ask a stranger to teach you a word in their native language — selfie together after.',
+      requiresText: true,
+      textPrompt: 'What word did they teach you, and in which language?',
+    },
+    { challenge: 'Find someone in uniform (transit staff, security, postal worker) and take a selfie together.' },
+    {
+      challenge: 'Find an elderly person and ask for their best piece of life advice — selfie together after.',
+      requiresText: true,
+      textPrompt: 'Write their life advice here.',
+    },
+    {
+      challenge: 'Buy the cheapest item in a Billa or Spar — selfie at the checkout holding your item.',
+      requiresText: true,
+      textPrompt: 'How much did it cost?',
+    },
+    { challenge: 'Get a stranger to write their name on your arm — selfie showing the name clearly.' },
+    { challenge: 'Ask a stranger to do a peace sign with you in a selfie. Both must be visible.' },
+    { challenge: 'Find a stranger willing to have a staring contest with you — selfie mid-stare.' },
+    { challenge: 'Ask a stranger to pretend to interview you using any object as a microphone — selfie during the interview.' },
+    { challenge: 'Find a street cleaner and mime helping them sweep — selfie together (with permission).' },
+    { challenge: 'Ask a stranger to give you a handshake that lasts at least 5 seconds — selfie mid-shake.' },
+    { challenge: 'Walk up a down escalator in a U-Bahn station — selfie mid-climb.' },
+    { challenge: 'Convince a stranger to strike a superhero pose with you in a public place — selfie together.' },
+    { challenge: 'Convince a stranger to do a synchronized jump with you — selfie mid-air. Both must be visible.' },
+    { challenge: 'Ask a stranger to flex their muscles with you — selfie mid-flex. Both must be visible.' },
+    { challenge: 'Find a shop owner and take a selfie together in front of their shop.' },
+    { challenge: 'Get a stranger to draw a smiley face on your hand — selfie clearly showing the drawing.' },
+  ],
+
+  hard: [
+    { challenge: 'Get a complete stranger to carry you piggyback for at least 3 steps — selfie mid-ride.' },
+    { challenge: 'Get a stranger to sign their name on your arm like an autograph — selfie showing the signature.' },
+    { challenge: 'Find a street musician and dance to their music for 30 seconds straight — selfie with them after.' },
+    { challenge: 'Convince a stranger to do the Macarena with you for 10 seconds — selfie together.' },
+    { challenge: 'Arm wrestle a stranger on a park bench — selfie mid-wrestle. Both must be visible.' },
+    { challenge: 'Ask a stranger to lift you off the ground — selfie mid-lift. Both must be visible.' },
+    { challenge: 'Get a stranger to teach you their best dance move — selfie mid-move together.' },
+    { challenge: 'Find 3 strangers willing to spell out Y-M-C-A with their arms — selfie together.' },
+    { challenge: 'Convince a stranger to freeze in place with you for 10 seconds in public — selfie mid-freeze.' },
+    { challenge: 'Convince a stranger to do a fake proposal (kneeling down) — selfie of the moment.' },
+    { challenge: 'Convince a complete stranger to give you a piggyback — or you give them one — selfie mid-ride.' },
+    { challenge: 'Get a group of at least 4 strangers to all do the same silly pose — selfie with the whole group.' },
+    { challenge: 'Ask a stranger to do a trust fall with you — selfie right after.' },
+    { challenge: 'Get a stranger to do a cartwheel or handstand in public — selfie mid-move.' },
+    { challenge: 'Get a stranger to give you a fireman\'s lift (over the shoulder) — selfie mid-lift.' },
+    { challenge: 'Convince 3 strangers to form a human chain (hands on shoulders) and walk 10 steps together — selfie.' },
+    { challenge: 'Get a stranger to do a moonwalk in public — selfie mid-move.' },
+    { challenge: 'Convince a stranger to give you a standing ovation in public — selfie during the applause.' },
+    { challenge: 'Get a stranger to let you style their hair in public — selfie showing the result.' },
+    { challenge: 'Convince a stranger to do a limbo under your arm — selfie mid-limbo.' },
+  ],
+};

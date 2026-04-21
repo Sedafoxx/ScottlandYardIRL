@@ -32,6 +32,9 @@ export default function StartPage() {
           value={gameCode}
           onChange={(e) => setGameCode(e.target.value.toUpperCase())}
         />
+        <p className="text-muted" style={{ fontSize: '0.8rem', lineHeight: 1.4 }}>
+          Multiple devices can join the same team — just use the same team name. Points and progress are shared.
+        </p>
         <button
           className="btn btn-primary"
           disabled={!teamName.trim() || !gameCode.trim()}

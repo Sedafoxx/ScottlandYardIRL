@@ -3,7 +3,8 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase/config';
 import { ref, onValue, set, get } from 'firebase/database';
 import RiddleCard from '../components/Riddle/RiddleCard';
-import HintDisplay from '../components/Hint/HintDisplay';
+import ChatPane from '../components/Chat/ChatPane';
+import Leaderboard from '../components/Leaderboard';
 
 export default function TeamPage() {
   const { gameCode } = useParams();
@@ -18,6 +19,18 @@ export default function TeamPage() {
 
   useEffect(() => {
     const gameRef = ref(db, `games/${gameCode}`);
+    const teamRef = ref(db, `games/${gameCode}/teams/${teamName}`);
+
+    // Only register the team if the game actually exists
+    get(gameRef).then((snap) => {
+      if (!snap.exists()) return;
+      get(teamRef).then((teamSnap) => {
+        if (!teamSnap.exists()) {
+          set(teamRef, { score: 0, currentRiddle: 0 });
+        }
+      });
+    });
+
     const unsub = onValue(gameRef, (snapshot) => {
       if (!snapshot.exists()) {
         setError('Game not found. Check your code.');
@@ -26,14 +39,6 @@ export default function TeamPage() {
       }
       setGame(snapshot.val());
       setLoading(false);
-    });
-
-    // Register team if not already registered
-    const teamRef = ref(db, `games/${gameCode}/teams/${teamName}`);
-    get(teamRef).then((snap) => {
-      if (!snap.exists()) {
-        set(teamRef, { score: 0, currentRiddle: 0, hintsUnlocked: [] });
-      }
     });
 
     const teamUnsub = onValue(teamRef, (snap) => {
@@ -54,7 +59,8 @@ export default function TeamPage() {
   const riddles = game?.riddles ? Object.values(game.riddles) : [];
   const currentRiddleIndex = teamData?.currentRiddle ?? 0;
   const currentRiddle = riddles[currentRiddleIndex];
-  const hintsUnlocked = teamData?.hintsUnlocked ?? [];
+  const currentHint = teamData?.currentHint ?? null;
+  const leaderboardTeams = game?.teams ? Object.entries(game.teams) : [];
 
   return (
     <div className="page" style={{ gap: '1rem' }}>
@@ -80,6 +86,7 @@ export default function TeamPage() {
 
       {game?.status === 'active' && currentRiddle && (
         <RiddleCard
+          key={currentRiddleIndex}
           riddle={currentRiddle}
           gameCode={gameCode}
           teamName={teamName}
@@ -95,20 +102,47 @@ export default function TeamPage() {
         </div>
       )}
 
-      {/* Unlocked hints */}
-      {hintsUnlocked.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          <h3 style={{ color: 'var(--color-accent)' }}>Your Hints</h3>
-          {hintsUnlocked.map((hint, i) => (
-            <HintDisplay key={i} hint={hint} index={i} />
-          ))}
+      {/* Hint status */}
+      {currentHint && (
+        <div className="card" style={{
+          borderColor: 'var(--color-accent)',
+          borderLeftWidth: '4px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <div>
+            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--color-accent)' }}>
+              Zone hint active
+            </p>
+            <p className="text-muted" style={{ fontSize: '0.75rem' }}>
+              {currentHint.radius}m radius — open map to see
+            </p>
+          </div>
+          <button
+            className="btn btn-accent"
+            style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem', flexShrink: 0 }}
+            onClick={() => navigate(`/map/${gameCode}?name=${encodeURIComponent(teamName)}`)}
+          >
+            Map
+          </button>
         </div>
       )}
+
+      <Leaderboard teams={leaderboardTeams} currentTeam={teamName} />
+
+      <ChatPane
+        gameCode={gameCode}
+        senderName={teamName}
+        globalPath="messages/global"
+        privatePath={`messages/teams/${teamName}`}
+        sendPath={`messages/teams/${teamName}`}
+        title="Chat with Admin"
+      />
 
       <button
         className="btn btn-outline"
         onClick={() => navigate(`/map/${gameCode}?name=${encodeURIComponent(teamName)}`)}
-        style={{ marginTop: 'auto' }}
       >
         Open Map
       </button>

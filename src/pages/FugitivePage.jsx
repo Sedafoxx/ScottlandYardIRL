@@ -2,44 +2,52 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase/config';
 import { ref, onValue, set } from 'firebase/database';
+import Leaderboard from '../components/Leaderboard';
 
 export default function FugitivePage() {
   const { gameCode } = useParams();
   const navigate = useNavigate();
   const [game, setGame] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [gpsError, setGpsError] = useState('');
+  const [lastPos, setLastPos] = useState(null);
 
   useEffect(() => {
-    const gameRef = ref(db, `games/${gameCode}`);
-    const unsub = onValue(gameRef, (snap) => {
+    const unsub = onValue(ref(db, `games/${gameCode}`), (snap) => {
       setGame(snap.val());
       setLoading(false);
     });
     return () => unsub();
   }, [gameCode]);
 
-  const shareLocation = () => {
+  // Continuous GPS tracking — writes to Firebase whenever position changes
+  useEffect(() => {
     if (!navigator.geolocation) {
-      alert('Geolocation not supported on this device.');
+      setGpsError('Geolocation is not supported on this device.');
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+
+    const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
+        setLastPos({ lat: latitude, lng: longitude, timestamp: Date.now() });
+        setGpsError('');
         set(ref(db, `games/${gameCode}/fugitive/lastUpdate`), {
           lat: latitude,
           lng: longitude,
           timestamp: Date.now(),
         });
-        alert('Location updated!');
       },
-      () => alert('Could not get location. Make sure location access is allowed.')
+      (err) => {
+        setGpsError(`GPS error: ${err.message}`);
+      },
+      { enableHighAccuracy: true }
     );
-  };
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [gameCode]);
 
   if (loading) return <div className="page" style={{ justifyContent: 'center', textAlign: 'center' }}>Loading...</div>;
-
-  const updates = game?.fugitive?.lastUpdate;
 
   return (
     <div className="page" style={{ gap: '1.5rem' }}>
@@ -62,31 +70,46 @@ export default function FugitivePage() {
             {game?.teams ? Object.keys(game.teams).length : 0}
           </span>
         </div>
-        {updates && (
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span className="text-muted">Last location shared</span>
-            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>
-              {new Date(updates.timestamp).toLocaleTimeString()}
-            </span>
-          </div>
+      </div>
+
+      {/* GPS status */}
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        <h2 style={{ fontSize: '1rem' }}>Location Tracking</h2>
+        {gpsError ? (
+          <p style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>{gpsError}</p>
+        ) : lastPos ? (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{
+                width: '8px', height: '8px', borderRadius: '50%',
+                background: 'var(--color-success)', display: 'inline-block',
+                boxShadow: '0 0 0 3px color-mix(in srgb, var(--color-success) 30%, transparent)',
+              }} />
+              <span style={{ fontSize: '0.875rem', color: 'var(--color-success)' }}>Tracking active</span>
+            </div>
+            <p className="text-muted" style={{ fontSize: '0.75rem' }}>
+              Last update: {new Date(lastPos.timestamp).toLocaleTimeString()}
+            </p>
+            <p className="text-muted" style={{ fontSize: '0.75rem' }}>
+              {lastPos.lat.toFixed(5)}, {lastPos.lng.toFixed(5)}
+            </p>
+          </>
+        ) : (
+          <p className="text-muted" style={{ fontSize: '0.875rem' }}>Acquiring GPS signal...</p>
         )}
       </div>
 
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-        <h2 style={{ fontSize: '1rem', marginBottom: '0.25rem' }}>Rules</h2>
-        <p className="text-muted" style={{ lineHeight: 1.6 }}>
-          The admin controls when teams get hints about your location. You don't have to share
-          your exact position — the admin decides what clues the hunters get.
-        </p>
-        <p className="text-muted" style={{ lineHeight: 1.6, marginTop: '0.25rem' }}>
-          If the admin asks you to share your location for a hint, use the button below.
-          Your exact coordinates are only visible to the Game Master.
+      <div className="card">
+        <p className="text-muted" style={{ lineHeight: 1.6, fontSize: '0.875rem' }}>
+          Your location is shared continuously with the Game Master only.
+          Teams get approximate zone hints when they solve riddles — not your exact position.
+          Keep this page open to stay tracked.
         </p>
       </div>
 
-      <button className="btn btn-primary" onClick={shareLocation}>
-        Share My Location (Admin Only)
-      </button>
+      {game?.teams && (
+        <Leaderboard teams={Object.entries(game.teams)} />
+      )}
 
       <button className="btn btn-outline" onClick={() => navigate('/')}>
         Leave Game

@@ -1,0 +1,32 @@
+export const PUZZLES = {
+  easy: [
+    { question: 'O, T, T, F, F, S, S, E, ?', answer: 'N' },
+    { question: 'J, F, M, A, M, J, J, A, S, O, N, ?', answer: 'D' },
+    { question: 'M, T, W, T, F, S, ?', answer: 'S' },
+    { question: 'YLHQQD', answer: 'VIENNA' },
+    { question: 'KHOOR', answer: 'HELLO' },
+    { question: 'What has keys but no locks, space but no room — you can enter but never go inside?', answer: 'KEYBOARD' },
+    { question: 'What gets wetter the more it dries?', answer: 'TOWEL' },
+    { question: 'What has to be broken before you can use it?', answer: 'EGG' },
+  ],
+  medium: [
+    { question: 'A, Z, B, Y, C, X, D, ?', answer: 'W' },
+    { question: '1, 2, 4, 7, 11, 16, 22, ?', answer: '29' },
+    { question: '2, 3, 5, 7, 11, 13, ?', answer: '17' },
+    { question: '1, 3, 6, 10, 15, 21, ?', answer: '28' },
+    { question: 'URYYB', answer: 'HELLO' },
+    { question: 'I have hands but cannot clap. A face but no eyes. What am I?', answer: 'CLOCK' },
+    { question: "I'm not alive but I grow. No lungs but I need air. No mouth but water kills me. What am I?", answer: 'FIRE' },
+    { question: '1, 1, 2, 3, 5, 8, 13, 21, ?', answer: '34' },
+  ],
+  hard: [
+    { question: '1, 11, 21, 1211, 111221, ?', answer: '312211' },
+    { question: 'GSVIV', answer: 'THERE' },
+    { question: 'ERVMMZ', answer: 'VIENNA' },
+    { question: 'The one who makes it does not need it. The one who buys it does not want it. The one who uses it does not know it. What is it?', answer: 'COFFIN' },
+    { question: 'A, B, D, G, K, P, ?', answer: 'V' },
+    { question: '31, 28, 31, 30, 31, 30, ?', answer: '31' },
+    { question: 'The more you remove from me, the bigger I get. What am I?', answer: 'HOLE' },
+    { question: 'I have cities but no houses. Mountains but no trees. Water but no fish. What am I?', answer: 'MAP' },
+  ],
+};
