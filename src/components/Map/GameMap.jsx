@@ -1,5 +1,6 @@
 import { MapContainer, TileLayer, Circle, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
+import { LANDMARKS } from '../../data/landmarks';
 
 // Fix default marker icons broken by Vite
 delete L.Icon.Default.prototype._getIconUrl;
@@ -33,7 +34,25 @@ const teamIcon = L.divIcon({
 const VIENNA_CENTER = [48.2082, 16.3738];
 const DEFAULT_ZOOM = 13;
 
-export default function GameMap({ currentHint = null, fugitiveLocation = null, teamLocation = null, isAdmin = false }) {
+function landmarkIcon(lm, visited) {
+  const border = visited ? '#888' : '#f5a623';
+  const opacity = visited ? '0.45' : '1';
+  const inner = visited
+    ? `<span style="font-size:13px;line-height:1">✓</span>`
+    : `<span style="font-size:15px;line-height:1">${lm.emoji}</span>`;
+  return L.divIcon({
+    html: `<div style="display:flex;flex-direction:column;align-items:center;gap:1px;opacity:${opacity}">
+      <div style="background:#fff;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.35);border:2.5px solid ${border}">${inner}</div>
+      <div style="background:rgba(0,0,0,0.72);color:#fff;border-radius:3px;padding:1px 5px;font-size:9px;white-space:nowrap;max-width:72px;overflow:hidden;text-overflow:ellipsis;text-align:center">${lm.name}</div>
+    </div>`,
+    className: '',
+    iconSize: [30, 46],
+    iconAnchor: [15, 46],
+    popupAnchor: [0, -48],
+  });
+}
+
+export default function GameMap({ currentHint = null, fugitiveLocation = null, teamLocation = null, visitedLandmarks = {}, isAdmin = false }) {
   return (
     <MapContainer
       center={VIENNA_CENTER}
@@ -80,6 +99,22 @@ export default function GameMap({ currentHint = null, fugitiveLocation = null, t
           </Popup>
         </Marker>
       )}
+
+      {/* Landmark bonus locations */}
+      {LANDMARKS.map(lm => {
+        const visited = !!visitedLandmarks[lm.id];
+        return (
+          <Marker key={lm.id} position={[lm.lat, lm.lng]} icon={landmarkIcon(lm, visited)}>
+            <Popup>
+              <strong>{lm.emoji} {lm.name}</strong><br />
+              {lm.description}<br />
+              {visited
+                ? <em style={{ color: '#888' }}>Already unlocked ✓</em>
+                : <em style={{ color: '#f5a623' }}>Enable GPS &amp; stand here to unlock a bonus!</em>}
+            </Popup>
+          </Marker>
+        );
+      })}
     </MapContainer>
   );
 }

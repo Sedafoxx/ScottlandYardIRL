@@ -67,6 +67,7 @@ export default function MapPage() {
           currentHint={currentHint}
           fugitiveLocation={fugitiveLocation}
           teamLocation={teamLocation}
+          visitedLandmarks={teamData?.visitedLandmarks ?? {}}
           isAdmin={isAdmin}
         />
       </div>

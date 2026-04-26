@@ -357,6 +357,20 @@ export default function AdminPage() {
     }
   };
 
+  const refreshZoneHints = async () => {
+    const fugSnap = await get(ref(db, `games/${activeGameCode}/fugitive/lastUpdate`));
+    const fug = fugSnap.val();
+    if (!fug?.lat) { alert('Fugitive has no GPS signal yet. Make sure the fugitive page is open and tracking.'); return; }
+    const teamsSnap = await get(ref(db, `games/${activeGameCode}/teams`));
+    const allTeams = teamsSnap.val() ?? {};
+    const updates = {};
+    Object.entries(allTeams).forEach(([tName, tData]) => {
+      const radius = tData.currentHint?.radius ?? STARTING_RADIUS;
+      updates[`${tName}/currentHint`] = generateHint(fug.lat, fug.lng, radius);
+    });
+    await update(ref(db, `games/${activeGameCode}/teams`), updates);
+  };
+
   const launchPowerUp = async () => {
     setLaunchingPowerUp(true);
     let challenge;
@@ -454,6 +468,11 @@ export default function AdminPage() {
                 )}
                 {activeGame.status === 'active' && (
                   <button className="btn btn-primary" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={endGame}>End Game</button>
+                )}
+                {activeGame.status === 'active' && (
+                  <button className="btn btn-outline" style={{ width: 'auto', padding: '0.5rem 1rem', color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }} onClick={refreshZoneHints}>
+                    Refresh Zones
+                  </button>
                 )}
                 {activeGame.status === 'ended' && (
                   <button className="btn btn-accent" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={downloadResults}>
