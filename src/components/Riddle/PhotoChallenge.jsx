@@ -106,7 +106,7 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
             <span style={{ fontSize: '0.75rem', fontWeight: 700, color: c.color, textTransform: 'uppercase' }}>{c.label}</span>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>-{chosenOption.reduction * 100}% radius</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>-{DIFFICULTY_CONFIG[chosenOption.difficulty].reduction * 100}% radius</span>
               <span style={{ fontSize: '0.75rem', color: 'var(--color-accent)', fontWeight: 600 }}>+{c.points} pts</span>
             </div>
           </div>
@@ -183,7 +183,7 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
                 {c.label}
               </span>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>-{option.reduction * 100}% radius</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>-{DIFFICULTY_CONFIG[option.difficulty].reduction * 100}% radius</span>
                 <span style={{ fontSize: '0.75rem', color: 'var(--color-accent)', fontWeight: 600 }}>+{c.points} pts</span>
               </div>
             </div>

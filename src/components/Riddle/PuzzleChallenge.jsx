@@ -13,7 +13,8 @@ function DifficultyPicker({ options, onSelect, doubleZone }) {
       {['easy', 'medium', 'hard'].map((diff) => {
         const c = DIFFICULTY_CONFIG[diff];
         const opt = options[diff];
-        const displayReduction = doubleZone ? Math.min(opt.reduction * 2, 0.9) * 100 : opt.reduction * 100;
+        const r = DIFFICULTY_CONFIG[diff].reduction;
+        const displayReduction = doubleZone ? Math.min(r * 2, 0.9) * 100 : r * 100;
         return (
           <button
             key={diff}
@@ -59,7 +60,7 @@ export default function PuzzleChallenge({ puzzle, gameCode, teamName, riddleInde
 
   const activePuzzle = puzzle.options[chosenDiff];
   const cfg = DIFFICULTY_CONFIG[chosenDiff];
-  const effectiveReduction = doubleZone ? Math.min(activePuzzle.reduction * 2, 0.9) : activePuzzle.reduction;
+  const effectiveReduction = doubleZone ? Math.min(DIFFICULTY_CONFIG[chosenDiff].reduction * 2, 0.9) : DIFFICULTY_CONFIG[chosenDiff].reduction;
 
   const submit = async () => {
     const normalized = answer.trim().toUpperCase();
@@ -81,7 +82,7 @@ export default function PuzzleChallenge({ puzzle, gameCode, teamName, riddleInde
       const currentRadius = teamData?.currentHint?.radius ?? STARTING_RADIUS;
       const isZoneFrozen = (zoneFreezeUntil ?? 0) > Date.now();
       const hasDoubleZone = teamData?.doubleZone === true;
-      const effectiveReduction = hasDoubleZone ? Math.min(activePuzzle.reduction * 2, 0.9) : activePuzzle.reduction;
+      const effectiveReduction = hasDoubleZone ? Math.min(DIFFICULTY_CONFIG[chosenDiff].reduction * 2, 0.9) : DIFFICULTY_CONFIG[chosenDiff].reduction;
       const newRadius = Math.max(Math.round(currentRadius * (1 - effectiveReduction)), 30);
 
       const updates = {

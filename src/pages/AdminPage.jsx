@@ -262,7 +262,7 @@ export default function AdminPage() {
       const submission = teamData?.submissions?.[riddleIndex];
       const isPoem = submission?.type === 'poem';
       const points = isPoem ? 10 : (DIFFICULTY_CONFIG[submission?.difficulty]?.points ?? 10);
-      const reduction = isPoem ? 0 : (submission?.reduction ?? DIFFICULTY_CONFIG.easy.reduction);
+      const reduction = isPoem ? 0 : (DIFFICULTY_CONFIG[submission?.difficulty]?.reduction ?? DIFFICULTY_CONFIG.easy.reduction);
       const currentRadius = isPoem ? STARTING_RADIUS : (teamData?.currentHint?.radius ?? STARTING_RADIUS);
       const newRadius = isPoem ? STARTING_RADIUS : Math.max(Math.round(currentRadius * (1 - reduction)), 30);
 
