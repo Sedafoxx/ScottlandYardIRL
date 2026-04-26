@@ -26,7 +26,10 @@ export default function MapPage() {
 
   const teamData = teamName && game?.teams?.[teamName];
   const currentHint = teamData?.currentHint ?? null;
-  const fugitiveLocation = isAdmin ? game?.fugitive?.lastUpdate : null;
+  const liveFeedUntil = parseInt(searchParams.get('livefeed') || '0', 10);
+  const liveFeedActive = !isAdmin && liveFeedUntil > Date.now();
+  const fugitiveLocation = (isAdmin || liveFeedActive) ? game?.fugitive?.lastUpdate : null;
+  const teamLocation = !isAdmin && teamData?.location ? teamData.location : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -43,9 +46,11 @@ export default function MapPage() {
           <p className="text-muted" style={{ fontSize: '0.75rem' }}>
             {isAdmin
               ? 'Showing fugitive real-time position'
-              : currentHint
-                ? `Zone hint active — ${currentHint.radius}m radius`
-                : 'No hint yet — complete a challenge'}
+              : liveFeedActive
+                ? '📡 Live Feed — fugitive location visible!'
+                : currentHint
+                  ? `Zone hint active — ${currentHint.radius}m radius`
+                  : 'No hint yet — complete a challenge'}
           </p>
         </div>
         <button
@@ -61,6 +66,7 @@ export default function MapPage() {
         <GameMap
           currentHint={currentHint}
           fugitiveLocation={fugitiveLocation}
+          teamLocation={teamLocation}
           isAdmin={isAdmin}
         />
       </div>

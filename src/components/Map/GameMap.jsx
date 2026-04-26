@@ -23,10 +23,17 @@ const exactHintIcon = L.divIcon({
   iconAnchor: [8, 8],
 });
 
+const teamIcon = L.divIcon({
+  html: '<div style="background:#3498db;width:14px;height:14px;border-radius:50%;border:3px solid white;box-shadow:0 0 0 3px #3498dbaa"></div>',
+  className: '',
+  iconSize: [14, 14],
+  iconAnchor: [7, 7],
+});
+
 const VIENNA_CENTER = [48.2082, 16.3738];
 const DEFAULT_ZOOM = 13;
 
-export default function GameMap({ currentHint = null, fugitiveLocation = null, isAdmin = false }) {
+export default function GameMap({ currentHint = null, fugitiveLocation = null, teamLocation = null, isAdmin = false }) {
   return (
     <MapContainer
       center={VIENNA_CENTER}
@@ -54,12 +61,22 @@ export default function GameMap({ currentHint = null, fugitiveLocation = null, i
         </Circle>
       )}
 
-      {/* Admin view: exact fugitive position */}
-      {isAdmin && fugitiveLocation && (
+      {/* Fugitive position — shown for admin always, or for teams with live feed active */}
+      {fugitiveLocation && (
         <Marker position={[fugitiveLocation.lat, fugitiveLocation.lng]} icon={fugitiveIcon}>
           <Popup>
-            <strong>Fugitive</strong><br />
+            <strong>{isAdmin ? 'Fugitive' : '📡 Live Feed'}</strong><br />
             Last update: {new Date(fugitiveLocation.timestamp).toLocaleTimeString()}
+          </Popup>
+        </Marker>
+      )}
+
+      {/* Team's own position */}
+      {teamLocation && (
+        <Marker position={[teamLocation.lat, teamLocation.lng]} icon={teamIcon}>
+          <Popup>
+            <strong>You are here</strong><br />
+            Updated: {new Date(teamLocation.timestamp).toLocaleTimeString()}
           </Popup>
         </Marker>
       )}

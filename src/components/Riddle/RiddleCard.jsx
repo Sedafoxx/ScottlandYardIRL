@@ -3,8 +3,11 @@ import { db } from '../../firebase/config';
 import { ref, set, onValue } from 'firebase/database';
 import PhotoChallenge from './PhotoChallenge';
 import PuzzleChallenge from './PuzzleChallenge';
+import WordleChallenge from './WordleChallenge';
+import MastermindChallenge from './MastermindChallenge';
+import EquationChallenge from './EquationChallenge';
 
-export default function RiddleCard({ riddle, gameCode, teamName, riddleIndex, totalRiddles }) {
+export default function RiddleCard({ riddle, gameCode, teamName, riddleIndex, totalRiddles, doubleZone, zoneFreezeUntil }) {
   const [answer, setAnswer] = useState('');
   const [status, setStatus] = useState('idle'); // idle | submitting | waiting | error
   const [submission, setSubmission] = useState(null);
@@ -100,6 +103,65 @@ export default function RiddleCard({ riddle, gameCode, teamName, riddleIndex, to
           gameCode={gameCode}
           teamName={teamName}
           riddleIndex={riddleIndex}
+          doubleZone={doubleZone}
+          zoneFreezeUntil={zoneFreezeUntil}
+        />
+      </div>
+    );
+  }
+
+  // ── Mastermind ────────────────────────────────────────────────────────────────
+  if (riddle.type === 'mastermind') {
+    return (
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <p className="text-muted" style={{ fontSize: '0.75rem' }}>
+          Challenge {riddleIndex + 1} of {totalRiddles}
+        </p>
+        <MastermindChallenge
+          puzzle={riddle}
+          gameCode={gameCode}
+          teamName={teamName}
+          riddleIndex={riddleIndex}
+          doubleZone={doubleZone}
+          zoneFreezeUntil={zoneFreezeUntil}
+        />
+      </div>
+    );
+  }
+
+  // ── Wordle ────────────────────────────────────────────────────────────────────
+  if (riddle.type === 'wordle') {
+    return (
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <p className="text-muted" style={{ fontSize: '0.75rem' }}>
+          Challenge {riddleIndex + 1} of {totalRiddles}
+        </p>
+        <WordleChallenge
+          puzzle={riddle}
+          gameCode={gameCode}
+          teamName={teamName}
+          riddleIndex={riddleIndex}
+          doubleZone={doubleZone}
+          zoneFreezeUntil={zoneFreezeUntil}
+        />
+      </div>
+    );
+  }
+
+  // ── Equation ──────────────────────────────────────────────────────────────────
+  if (riddle.type === 'equation') {
+    return (
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <p className="text-muted" style={{ fontSize: '0.75rem' }}>
+          Challenge {riddleIndex + 1} of {totalRiddles}
+        </p>
+        <EquationChallenge
+          puzzle={riddle}
+          gameCode={gameCode}
+          teamName={teamName}
+          riddleIndex={riddleIndex}
+          doubleZone={doubleZone}
+          zoneFreezeUntil={zoneFreezeUntil}
         />
       </div>
     );

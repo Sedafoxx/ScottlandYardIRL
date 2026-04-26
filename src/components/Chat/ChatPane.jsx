@@ -2,18 +2,21 @@ import { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/config';
 import { ref, onChildAdded, push, set } from 'firebase/database';
 
-export default function ChatPane({ gameCode, senderName, globalPath, privatePath, sendPath, title }) {
+export default function ChatPane({ gameCode, senderName, globalPath, privatePath, sendPath, title, onNewMessage, unreadCount, onMarkRead }) {
   const [globalMsgs, setGlobalMsgs] = useState([]);
   const [privateMsgs, setPrivateMsgs] = useState([]);
   const [text, setText] = useState('');
   const [sendError, setSendError] = useState('');
   const bottomRef = useRef(null);
+  const mountTimeRef = useRef(Date.now());
 
   useEffect(() => {
     if (!globalPath) { setGlobalMsgs([]); return; }
     setGlobalMsgs([]);
     return onChildAdded(ref(db, `games/${gameCode}/${globalPath}`), (snap) => {
-      setGlobalMsgs(prev => [...prev, { ...snap.val(), _tag: 'global', _key: snap.key }]);
+      const msg = { ...snap.val(), _tag: 'global', _key: snap.key };
+      setGlobalMsgs(prev => [...prev, msg]);
+      if (msg.timestamp > mountTimeRef.current && onNewMessage) onNewMessage(msg);
     });
   }, [gameCode, globalPath]);
 
@@ -21,7 +24,9 @@ export default function ChatPane({ gameCode, senderName, globalPath, privatePath
     if (!privatePath) { setPrivateMsgs([]); return; }
     setPrivateMsgs([]);
     return onChildAdded(ref(db, `games/${gameCode}/${privatePath}`), (snap) => {
-      setPrivateMsgs(prev => [...prev, { ...snap.val(), _tag: 'private', _key: snap.key }]);
+      const msg = { ...snap.val(), _tag: 'private', _key: snap.key };
+      setPrivateMsgs(prev => [...prev, msg]);
+      if (msg.timestamp > mountTimeRef.current && onNewMessage) onNewMessage(msg);
     });
   }, [gameCode, privatePath]);
 
@@ -51,7 +56,20 @@ export default function ChatPane({ gameCode, senderName, globalPath, privatePath
 
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-      {title && <h2 style={{ fontSize: '1rem' }}>{title}</h2>}
+      {title && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h2 style={{ fontSize: '1rem' }}>{title}</h2>
+          {unreadCount > 0 && (
+            <span style={{
+              background: 'var(--color-primary)', color: '#fff',
+              borderRadius: '999px', fontSize: '0.7rem', fontWeight: 700,
+              padding: '0.1rem 0.45rem', lineHeight: '1.4',
+            }}>
+              {unreadCount}
+            </span>
+          )}
+        </div>
+      )}
 
       <div style={{
         height: '220px',
@@ -112,6 +130,7 @@ export default function ChatPane({ gameCode, senderName, globalPath, privatePath
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && send()}
+          onFocus={() => onMarkRead?.()}
           style={{ flex: 1, marginBottom: 0 }}
         />
         <button

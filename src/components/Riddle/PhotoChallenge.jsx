@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import heic2any from 'heic2any';
 import { db, storage } from '../../firebase/config';
-import { ref as dbRef, onValue, set } from 'firebase/database';
+import { ref as dbRef, onValue, update } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { DIFFICULTY_CONFIG } from '../../utils/hints';
 
@@ -27,12 +27,12 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
 
   const selectOption = async (option) => {
     setChosenOption(option);
-    await set(dbRef(db, `games/${gameCode}/teams/${teamName}/riddleChoices/${riddleIndex}`), option);
+    await update(dbRef(db, `games/${gameCode}/teams/${teamName}/riddleChoices`), { [riddleIndex]: option });
   };
 
   const clearChoice = async () => {
     setChosenOption(null);
-    await set(dbRef(db, `games/${gameCode}/teams/${teamName}/riddleChoices/${riddleIndex}`), null);
+    await update(dbRef(db, `games/${gameCode}/teams/${teamName}/riddleChoices`), { [riddleIndex]: null });
   };
 
   const handleFile = async (e) => {
@@ -54,15 +54,20 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
       const sRef = storageRef(storage, path);
       await uploadBytes(sRef, file);
       const url = await getDownloadURL(sRef);
-      await set(dbRef(db, `games/${gameCode}/teams/${teamName}/submissions/${riddleIndex}`), {
-        photoUrl: url,
-        status: 'pending',
-        submittedAt: Date.now(),
-        challenge: chosenOption.challenge,
-        difficulty: chosenOption.difficulty,
-        reduction: chosenOption.reduction,
-        riddleIndex,
-        ...(chosenOption.requiresText && submittedText.trim() ? { submittedText: submittedText.trim() } : {}),
+      // Advance the riddle and store the submission atomically — team moves on immediately,
+      // admin approval only retroactively awards points and shrinks the zone.
+      await update(dbRef(db, `games/${gameCode}/teams/${teamName}`), {
+        currentRiddle: riddleIndex + 1,
+        [`submissions/${riddleIndex}`]: {
+          photoUrl: url,
+          status: 'pending',
+          submittedAt: Date.now(),
+          challenge: chosenOption.challenge,
+          difficulty: chosenOption.difficulty,
+          reduction: chosenOption.reduction,
+          riddleIndex,
+          ...(chosenOption.requiresText && submittedText.trim() ? { submittedText: submittedText.trim() } : {}),
+        },
       });
     } catch (err) {
       setUploadError('Upload failed. Check your connection and try again.');
@@ -74,45 +79,20 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
 
   const cfg = (difficulty) => DIFFICULTY_CONFIG[difficulty] ?? DIFFICULTY_CONFIG.easy;
 
-  // ── Pending ──────────────────────────────────────────────────────────────────
-  if (submission?.status === 'pending') {
+  // ── Pending / approved / rejected — team has already moved on ─────────────────
+  if (submission) {
     const c = cfg(submission.difficulty);
+    const approved = submission.status === 'approved';
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <div style={{ padding: '0.5rem 0.75rem', background: 'var(--color-bg)', borderRadius: '8px', borderLeft: `3px solid ${c.color}` }}>
           <p style={{ fontSize: '0.75rem', fontWeight: 700, color: c.color, textTransform: 'uppercase' }}>{c.label} challenge</p>
           <p style={{ fontSize: '0.875rem', marginTop: '0.25rem', lineHeight: 1.5 }}>{submission.challenge}</p>
         </div>
-        <img src={submission.photoUrl} alt="Submitted" style={{ width: '100%', borderRadius: '8px', objectFit: 'cover', maxHeight: '240px' }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', background: 'var(--color-bg)', borderRadius: '8px' }}>
-          <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0, background: '#f5a623', boxShadow: '0 0 0 3px color-mix(in srgb, #f5a623 30%, transparent)' }} />
-          <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>Waiting for admin approval…</p>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Rejected ─────────────────────────────────────────────────────────────────
-  if (submission?.status === 'rejected') {
-    const c = cfg(submission.difficulty);
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <div style={{ padding: '0.5rem 0.75rem', background: 'var(--color-bg)', borderRadius: '8px', borderLeft: `3px solid ${c.color}` }}>
-          <p style={{ fontSize: '0.75rem', fontWeight: 700, color: c.color, textTransform: 'uppercase' }}>{c.label} challenge</p>
-          <p style={{ fontSize: '0.875rem', marginTop: '0.25rem', lineHeight: 1.5 }}>{submission.challenge}</p>
-        </div>
-        <img src={submission.photoUrl} alt="Rejected" style={{ width: '100%', borderRadius: '8px', objectFit: 'cover', maxHeight: '240px', opacity: 0.5 }} />
-        <div style={{ padding: '0.75rem', background: 'var(--color-bg)', borderRadius: '8px', borderLeft: '4px solid var(--color-primary)' }}>
-          <p style={{ fontSize: '0.875rem', color: 'var(--color-primary)', fontWeight: 600 }}>Photo rejected</p>
-          <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
-            {submission.rejectReason || 'Make sure you are clearly visible in the photo and try again.'}
-          </p>
-        </div>
-        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFile} style={{ display: 'none' }} />
-        <button className="btn btn-accent" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-          {uploading ? 'Uploading…' : 'Resubmit Photo'}
-        </button>
-        {uploadError && <p style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>{uploadError}</p>}
+        <img src={submission.photoUrl} alt="Submitted" style={{ width: '100%', borderRadius: '8px', objectFit: 'cover', maxHeight: '240px', opacity: approved ? 1 : 0.6 }} />
+        <p style={{ fontSize: '0.875rem', color: approved ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
+          {approved ? `Photo approved — +${c.points} pts awarded!` : 'Photo submitted — pending admin review for bonus points.'}
+        </p>
       </div>
     );
   }
@@ -133,7 +113,7 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
           <p style={{ lineHeight: 1.6, fontSize: '0.9rem' }}>{chosenOption.challenge}</p>
         </div>
         <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-          This must be a <strong>selfie</strong> — you must be clearly visible in the photo. The admin will review it before your zone updates.
+          This must be a <strong>selfie</strong> — you must be clearly visible. Submit and move on; the admin reviews it for bonus points and a zone update.
         </p>
         {chosenOption.requiresText && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
