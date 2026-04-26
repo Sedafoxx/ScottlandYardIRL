@@ -401,8 +401,8 @@ export default function TeamPage() {
         </button>
         {rulesOpen && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.82rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
-            <p><strong style={{ color: 'var(--color-hunter)' }}>Goal:</strong> Find and catch the fugitive.</p>
-            <p><strong style={{ color: 'var(--color-accent)' }}>Catch the fugitive:</strong> +100 pts — tell the Game Master when you have them.</p>
+            <p><strong style={{ color: 'var(--color-hunter)' }}>Goal:</strong> Find and catch Mister X.</p>
+            <p><strong style={{ color: 'var(--color-accent)' }}>Catch Mister X:</strong> +100 pts — tell the Game Master when you have them.</p>
             <p><strong style={{ color: 'var(--color-success)' }}>Easy challenge:</strong> −5% zone radius · +10 pts</p>
             <p><strong style={{ color: 'var(--color-accent)' }}>Medium challenge:</strong> −10% zone radius · +20 pts</p>
             <p><strong style={{ color: 'var(--color-primary)' }}>Hard challenge:</strong> −15% zone radius · +30 pts</p>
@@ -437,7 +437,7 @@ export default function TeamPage() {
       {game?.status === 'active' && !currentRiddle && currentRiddleIndex >= riddles.length && (
         <div className="card" style={{ textAlign: 'center' }}>
           <p style={{ fontSize: '1.5rem' }}>All riddles solved!</p>
-          <p className="text-muted" style={{ marginTop: '0.5rem' }}>Now find the fugitive!</p>
+          <p className="text-muted" style={{ marginTop: '0.5rem' }}>Now find Mister X!</p>
         </div>
       )}
 
@@ -463,7 +463,7 @@ export default function TeamPage() {
         return (
           <div className="card" style={{ borderLeft: '4px solid var(--color-fugitive)' }}>
             <p style={{ fontWeight: 700, color: 'var(--color-fugitive)', fontSize: '0.875rem' }}>
-              Fugitive Movement Reported
+              Mister X Movement Reported
             </p>
             <p style={{ marginTop: '0.25rem', fontSize: '1rem' }}>
               {cfg?.emoji ?? ''} {cfg?.label ?? t.type}{stopsText}
@@ -541,10 +541,10 @@ export default function TeamPage() {
       {/* Received selfie */}
       {game?.selfieRequest?.requestedBy === teamName && game.selfieRequest.status === 'fulfilled' && (
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderLeft: '4px solid #1abc9c' }}>
-          <p style={{ fontWeight: 700, color: '#1abc9c' }}>📸 Fugitive Selfie Received!</p>
+          <p style={{ fontWeight: 700, color: '#1abc9c' }}>📸 Mister X Selfie Received!</p>
           <img
             src={game.selfieRequest.photoUrl}
-            alt="Fugitive selfie"
+            alt="Mister X selfie"
             style={{ width: '100%', borderRadius: 8, objectFit: 'cover', maxHeight: 280 }}
           />
           <p className="text-muted" style={{ fontSize: '0.75rem' }}>
@@ -554,7 +554,7 @@ export default function TeamPage() {
       )}
       {game?.selfieRequest?.requestedBy === teamName && game.selfieRequest.status === 'pending' && (
         <div className="card" style={{ borderLeft: '4px solid #1abc9c' }}>
-          <p style={{ fontWeight: 700, color: '#1abc9c' }}>📸 Selfie requested — waiting for fugitive…</p>
+          <p style={{ fontWeight: 700, color: '#1abc9c' }}>📸 Selfie requested — waiting for Mister X…</p>
         </div>
       )}
 

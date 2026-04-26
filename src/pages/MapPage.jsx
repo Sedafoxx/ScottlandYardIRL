@@ -45,9 +45,9 @@ export default function MapPage() {
           <p style={{ fontWeight: 700 }}>{isAdmin ? 'Admin View' : teamName}</p>
           <p className="text-muted" style={{ fontSize: '0.75rem' }}>
             {isAdmin
-              ? 'Showing fugitive real-time position'
+              ? 'Showing Mister X real-time position'
               : liveFeedActive
-                ? '📡 Live Feed — fugitive location visible!'
+                ? '📡 Live Feed — Mister X location visible!'
                 : currentHint
                   ? `Zone hint active — ${currentHint.radius}m radius`
                   : 'No hint yet — complete a challenge'}

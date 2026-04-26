@@ -46,7 +46,7 @@ export default function StartPage() {
 
       {/* Fugitive */}
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        <h2 style={{ fontSize: '1rem', color: 'var(--color-fugitive)' }}>Fugitive</h2>
+        <h2 style={{ fontSize: '1rem', color: 'var(--color-fugitive)' }}>Mister X</h2>
         <input
           type="text"
           placeholder="Game code"
@@ -58,7 +58,7 @@ export default function StartPage() {
           disabled={!gameCode.trim()}
           onClick={() => navigate(`/fugitive/${gameCode}`)}
         >
-          I am the Fugitive
+          I am Mister X
         </button>
       </div>
 

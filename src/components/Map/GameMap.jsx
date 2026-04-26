@@ -74,7 +74,7 @@ export default function GameMap({ currentHint = null, fugitiveLocation = null, t
         >
           <Popup>
             <strong>Zone hint</strong><br />
-            The fugitive is somewhere in this area.<br />
+            Mister X is somewhere in this area.<br />
             Radius: {currentHint.radius}m
           </Popup>
         </Circle>
@@ -84,7 +84,7 @@ export default function GameMap({ currentHint = null, fugitiveLocation = null, t
       {fugitiveLocation && (
         <Marker position={[fugitiveLocation.lat, fugitiveLocation.lng]} icon={fugitiveIcon}>
           <Popup>
-            <strong>{isAdmin ? 'Fugitive' : '📡 Live Feed'}</strong><br />
+            <strong>{isAdmin ? 'Mister X' : '📡 Live Feed'}</strong><br />
             Last update: {new Date(fugitiveLocation.timestamp).toLocaleTimeString()}
           </Popup>
         </Marker>

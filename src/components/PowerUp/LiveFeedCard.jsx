@@ -21,7 +21,7 @@ export default function LiveFeedCard({ until, gameCode, teamName }) {
         <div>
           <p style={{ fontWeight: 700, color: '#e74c3c' }}>📡 Live Feed Active</p>
           <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: 2 }}>
-            Fugitive visible on map — {secStr} remaining
+            Mister X visible on map — {secStr} remaining
           </p>
         </div>
         <button

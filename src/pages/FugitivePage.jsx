@@ -86,11 +86,11 @@ export default function FugitivePage() {
       announcedAt,
     });
     const label = stops != null
-      ? `${t.emoji} Fugitive: ${t.label} — ${stops} stop${stops !== 1 ? 's' : ''}`
-      : `${t.emoji} Fugitive: ${t.label}`;
+      ? `${t.emoji} Mister X: ${t.label} — ${stops} stop${stops !== 1 ? 's' : ''}`
+      : `${t.emoji} Mister X: ${t.label}`;
     await push(ref(db, `games/${gameCode}/messages/global`), {
       text: label,
-      sender: 'Fugitive',
+      sender: 'Mister X',
       timestamp: announcedAt,
     });
     setAnnouncing(false);
@@ -134,7 +134,7 @@ export default function FugitivePage() {
     <div className="page" style={{ gap: '1.5rem' }}>
       <div style={{ textAlign: 'center' }}>
         <h1 style={{ color: 'var(--color-fugitive)', fontSize: '1.75rem', fontWeight: 800 }}>
-          You are the Fugitive
+          You are Mister X
         </h1>
         <p className="text-muted">Game: {gameCode}</p>
       </div>

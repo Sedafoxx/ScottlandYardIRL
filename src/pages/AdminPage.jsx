@@ -363,7 +363,7 @@ export default function AdminPage() {
   const refreshZoneHints = async () => {
     const fugSnap = await get(ref(db, `games/${activeGameCode}/fugitive/lastUpdate`));
     const fug = fugSnap.val();
-    if (!fug?.lat) { alert('Fugitive has no GPS signal yet. Make sure the fugitive page is open and tracking.'); return; }
+    if (!fug?.lat) { alert('Mister X has no GPS signal yet. Make sure the Mister X page is open and tracking.'); return; }
     const teamsSnap = await get(ref(db, `games/${activeGameCode}/teams`));
     const allTeams = teamsSnap.val() ?? {};
     const updates = {};
@@ -745,7 +745,7 @@ export default function AdminPage() {
           {/* Fugitive location */}
           {fugitiveLocation && (
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <h2 style={{ fontSize: '1rem', color: 'var(--color-fugitive)' }}>Fugitive Location</h2>
+              <h2 style={{ fontSize: '1rem', color: 'var(--color-fugitive)' }}>Mister X Location</h2>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{
                   width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
