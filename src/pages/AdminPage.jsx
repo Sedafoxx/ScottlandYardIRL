@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import JSZip from 'jszip';
 import heic2any from 'heic2any';
 import { db } from '../firebase/config';
 import { ref, onValue, set, update, get, remove } from 'firebase/database';
@@ -300,60 +301,62 @@ export default function AdminPage() {
     }
   };
 
+  const [exporting, setExporting] = useState(false);
+
   const downloadResults = async () => {
-    const sortedTeams = Object.entries(activeGame.teams ?? {})
-      .sort((a, b) => (b[1].score ?? 0) - (a[1].score ?? 0))
-      .map(([name, data], i) => ({
-        rank: i + 1,
-        team: name,
-        score: data.score ?? 0,
-        riddlesCompleted: data.currentRiddle ?? 0,
-        caughtFugitive: data.caughtFugitive ?? false,
-        photos: Object.entries(data.submissions ?? {})
-          .filter(([, s]) => s.photoUrl)
-          .map(([idx, s]) => ({ challenge: idx, status: s.status, url: s.photoUrl })),
-      }));
+    setExporting(true);
+    try {
+      const zip = new JSZip();
 
-    const result = {
-      gameCode: activeGameCode,
-      status: activeGame.status,
-      exportedAt: new Date().toISOString(),
-      teams: sortedTeams,
-    };
+      const sortedTeams = Object.entries(activeGame.teams ?? {})
+        .sort((a, b) => (b[1].score ?? 0) - (a[1].score ?? 0))
+        .map(([name, data], i) => ({
+          rank: i + 1,
+          team: name,
+          score: data.score ?? 0,
+          riddlesCompleted: data.currentRiddle ?? 0,
+          caughtFugitive: data.caughtFugitive ?? false,
+        }));
 
-    const jsonBlob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
-    const jsonUrl = URL.createObjectURL(jsonBlob);
-    const jsonA = document.createElement('a');
-    jsonA.href = jsonUrl;
-    jsonA.download = `scotland-yard-${activeGameCode}-results.json`;
-    jsonA.click();
-    URL.revokeObjectURL(jsonUrl);
+      zip.file('results.json', JSON.stringify({
+        gameCode: activeGameCode,
+        status: activeGame.status,
+        exportedAt: new Date().toISOString(),
+        teams: sortedTeams,
+      }, null, 2));
 
-    // Download all submitted photos
-    const allPhotos = [];
-    Object.entries(activeGame.teams ?? {}).forEach(([teamName, teamData]) => {
-      Object.entries(teamData.submissions ?? {}).forEach(([idx, sub]) => {
-        if (sub.photoUrl) allPhotos.push({ teamName, idx, url: sub.photoUrl, status: sub.status });
+      // Add each submitted photo into a per-team folder
+      const fetchJobs = [];
+      Object.entries(activeGame.teams ?? {}).forEach(([teamName, teamData]) => {
+        Object.entries(teamData.submissions ?? {}).forEach(([idx, sub]) => {
+          if (!sub.photoUrl) return;
+          const folder = zip.folder(teamName);
+          const label = `challenge${String(parseInt(idx) + 1).padStart(2, '0')}_${sub.status}`;
+          fetchJobs.push(
+            fetch(sub.photoUrl)
+              .then(r => r.blob())
+              .then(blob => {
+                const ext = blob.type.includes('png') ? 'png' : 'jpg';
+                folder.file(`${label}.${ext}`, blob);
+              })
+              .catch(() => {
+                folder.file(`${label}_failed.txt`, `Could not fetch: ${sub.photoUrl}`);
+              })
+          );
+        });
       });
-    });
 
-    for (const { teamName, idx, url, status } of allPhotos) {
-      try {
-        const resp = await fetch(url);
-        const blob = await resp.blob();
-        const ext = blob.type.includes('png') ? 'png' : 'jpg';
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = `${teamName}_challenge${parseInt(idx) + 1}_${status}.${ext}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(blobUrl);
-        await new Promise(r => setTimeout(r, 300));
-      } catch (e) {
-        console.error('Photo download failed:', teamName, idx, e);
-      }
+      await Promise.all(fetchJobs);
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `scotland-yard-${activeGameCode}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -475,8 +478,8 @@ export default function AdminPage() {
                   </button>
                 )}
                 {activeGame.status === 'ended' && (
-                  <button className="btn btn-accent" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={downloadResults}>
-                    Download Results
+                  <button className="btn btn-accent" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={downloadResults} disabled={exporting}>
+                    {exporting ? 'Building ZIP…' : 'Download Results'}
                   </button>
                 )}
                 <button className="btn btn-outline" style={{ width: 'auto', padding: '0.5rem 1rem', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }} onClick={deleteGame}>
