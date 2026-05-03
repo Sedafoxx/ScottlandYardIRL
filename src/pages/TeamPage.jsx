@@ -6,6 +6,7 @@ import { ref, onValue, set, get, update, remove, runTransaction } from 'firebase
 import { buildRiddles } from '../utils/riddles';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import RiddleCard from '../components/Riddle/RiddleCard';
+import GameMap from '../components/Map/GameMap';
 import ChatPane from '../components/Chat/ChatPane';
 import Leaderboard from '../components/Leaderboard';
 import { DIFFICULTY_CONFIG, haversineDistance } from '../utils/hints';
@@ -293,6 +294,7 @@ export default function TeamPage() {
   const [teamLocation, setTeamLocation] = useState(null);
   const [chatUnread, setChatUnread] = useState(0);
   const [teamChatUnread, setTeamChatUnread] = useState(0);
+  const [showMap, setShowMap] = useState(false);
   const [activeLandmark, setActiveLandmark] = useState(null);
   const [rulesOpen, setRulesOpen] = useState(false);
   const gpsWatchRef = useRef(null);
@@ -383,6 +385,12 @@ export default function TeamPage() {
   const currentRiddle = riddles[currentRiddleIndex];
   const currentHint = teamData?.currentHint ?? null;
   const leaderboardTeams = game?.teams ? Object.entries(game.teams) : [];
+  const liveFeedActive = (teamData?.liveFeedUntil ?? 0) > Date.now();
+  const teammateLocations = game?.teams
+    ? Object.entries(game.teams)
+        .filter(([n, d]) => n !== teamName && (d.bigTeam || n) === bigTeam && d.location)
+        .map(([n, d]) => ({ name: n, lat: d.location.lat, lng: d.location.lng, timestamp: d.location.timestamp }))
+    : [];
 
   return (
     <div className="page" style={{ gap: '1rem' }}>
@@ -506,8 +514,7 @@ export default function TeamPage() {
             className="btn btn-accent"
             style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem', flexShrink: 0 }}
             onClick={() => {
-            const livefeed = teamData?.liveFeedUntil > Date.now() ? `&livefeed=${teamData.liveFeedUntil}` : '';
-            navigate(`/map/${gameCode}?name=${encodeURIComponent(teamName)}&bigTeam=${encodeURIComponent(bigTeam)}${livefeed}`);
+            setShowMap(true);
           }}
           >
             Map
@@ -585,8 +592,7 @@ export default function TeamPage() {
           className="btn btn-outline"
           style={{ flex: 1 }}
           onClick={() => {
-            const livefeed = teamData?.liveFeedUntil > Date.now() ? `&livefeed=${teamData.liveFeedUntil}` : '';
-            navigate(`/map/${gameCode}?name=${encodeURIComponent(teamName)}&bigTeam=${encodeURIComponent(bigTeam)}${livefeed}`);
+            setShowMap(true);
           }}
         >
           Open Map
@@ -623,6 +629,51 @@ export default function TeamPage() {
         teamName={teamName}
         teams={Object.keys(game?.teams ?? {})}
       />
+
+      {/* Inline full-screen map overlay — TeamPage stays mounted so GPS keeps running */}
+      {showMap && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 600, display: 'flex', flexDirection: 'column', background: '#000' }}>
+          <div style={{
+            padding: '0.75rem 1rem',
+            background: 'var(--color-surface)',
+            borderBottom: '1px solid var(--color-border)',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            flexShrink: 0,
+          }}>
+            <div>
+              <p style={{ fontWeight: 700 }}>{teamName}</p>
+              <p className="text-muted" style={{ fontSize: '0.75rem' }}>
+                {liveFeedActive
+                  ? '📡 Live Feed — Mister X visible!'
+                  : currentHint
+                    ? `Zone hint — ${currentHint.radius}m radius`
+                    : 'No hint yet'}
+              </p>
+              {teammateLocations.length > 0 && (
+                <p style={{ fontSize: '0.7rem', color: '#2ecc71', marginTop: '0.1rem' }}>
+                  ● {teammateLocations.length} teammate{teammateLocations.length !== 1 ? 's' : ''} on map
+                </p>
+              )}
+            </div>
+            <button
+              className="btn btn-outline"
+              style={{ width: 'auto', padding: '0.5rem 1rem', fontSize: '0.875rem' }}
+              onClick={() => setShowMap(false)}
+            >
+              Back
+            </button>
+          </div>
+          <div style={{ flex: 1 }}>
+            <GameMap
+              currentHint={currentHint}
+              fugitiveLocation={liveFeedActive ? game?.fugitive?.lastUpdate : null}
+              teamLocation={teamLocation}
+              visitedLandmarks={teamData?.visitedLandmarks ?? {}}
+              teammateLocations={teammateLocations}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
