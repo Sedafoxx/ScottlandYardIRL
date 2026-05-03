@@ -62,31 +62,15 @@ export default function StartPage() {
         />
         {teamName.trim() && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-            <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Subteam
-            </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-              {['—', '1', '2', '3', '4', '5', '6'].map((val) => {
-                const active = val === '—' ? subteamNum === '' : subteamNum === val;
-                return (
-                  <button
-                    key={val}
-                    type="button"
-                    className="btn btn-outline"
-                    style={{
-                      padding: '0.35rem 0.75rem', fontSize: '0.85rem',
-                      borderColor: active ? 'var(--color-hunter)' : undefined,
-                      color: active ? 'var(--color-hunter)' : undefined,
-                    }}
-                    onClick={() => setSubteamNum(val === '—' ? '' : val)}
-                  >
-                    {val === '—' ? 'No subteam' : `Subteam ${val}`}
-                  </button>
-                );
-              })}
-            </div>
+            <input
+              type="number"
+              placeholder="Subteam number (optional)"
+              value={subteamNum}
+              onChange={(e) => setSubteamNum(e.target.value.replace(/[^0-9]/, ''))}
+              min="1"
+            />
             <p className="text-muted" style={{ fontSize: '0.78rem', lineHeight: 1.4 }}>
-              Same subteam = shared progress across devices. Subteams of the same team see each other on the map and share a team chat.
+              Same subteam number = shared progress across devices. Subteams of the same team see each other on the map and share a team chat.
             </p>
           </div>
         )}
