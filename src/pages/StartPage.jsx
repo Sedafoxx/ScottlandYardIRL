@@ -1,10 +1,38 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { db } from '../firebase/config';
+import { ref, get } from 'firebase/database';
 
 export default function StartPage() {
   const navigate = useNavigate();
   const [teamName, setTeamName] = useState('');
+  const [subteamNum, setSubteamNum] = useState('');
   const [gameCode, setGameCode] = useState('');
+  const [fugitiveCode, setFugitiveCode] = useState('');
+  const [fugitiveError, setFugitiveError] = useState('');
+  const [fugitiveLooking, setFugitiveLooking] = useState(false);
+
+  const joinAsTeam = () => {
+    const fullName = subteamNum.trim()
+      ? `${teamName.trim()} ${subteamNum.trim()}`
+      : teamName.trim();
+    const bigTeam = teamName.trim();
+    navigate(`/team/${gameCode}?name=${encodeURIComponent(fullName)}&bigTeam=${encodeURIComponent(bigTeam)}`);
+  };
+
+  const joinAsFugitive = async () => {
+    setFugitiveError('');
+    setFugitiveLooking(true);
+    try {
+      const snap = await get(ref(db, `fugitiveCodes/${fugitiveCode.trim()}`));
+      if (!snap.exists()) { setFugitiveError('Invalid Mister X code.'); return; }
+      navigate(`/fugitive/${snap.val()}`);
+    } catch {
+      setFugitiveError('Connection error. Try again.');
+    } finally {
+      setFugitiveLooking(false);
+    }
+  };
 
   return (
     <div className="page" style={{ justifyContent: 'center', gap: '1.5rem' }}>
@@ -26,19 +54,31 @@ export default function StartPage() {
           value={teamName}
           onChange={(e) => setTeamName(e.target.value)}
         />
-        <input
-          type="text"
-          placeholder="Game code (from admin)"
-          value={gameCode}
-          onChange={(e) => setGameCode(e.target.value.toUpperCase())}
-        />
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <input
+            type="text"
+            placeholder="Game code (from admin)"
+            value={gameCode}
+            onChange={(e) => setGameCode(e.target.value.toUpperCase())}
+            style={{ flex: 1 }}
+          />
+          <input
+            type="number"
+            placeholder="Sub #"
+            value={subteamNum}
+            onChange={(e) => setSubteamNum(e.target.value.replace(/[^1-9]/, ''))}
+            min="1"
+            max="9"
+            style={{ width: '4.5rem' }}
+          />
+        </div>
         <p className="text-muted" style={{ fontSize: '0.8rem', lineHeight: 1.4 }}>
-          Multiple devices can join the same team — just use the same team name. Points and progress are shared.
+          Subteam # is optional. Same name + same subteam # = shared progress. Subteams of the same team see each other on the map and share a team chat.
         </p>
         <button
           className="btn btn-primary"
           disabled={!teamName.trim() || !gameCode.trim()}
-          onClick={() => navigate(`/team/${gameCode}?name=${encodeURIComponent(teamName)}`)}
+          onClick={joinAsTeam}
         >
           Join Hunt
         </button>
@@ -49,16 +89,17 @@ export default function StartPage() {
         <h2 style={{ fontSize: '1rem', color: 'var(--color-fugitive)' }}>Mister X</h2>
         <input
           type="text"
-          placeholder="Game code"
-          value={gameCode}
-          onChange={(e) => setGameCode(e.target.value.toUpperCase())}
+          placeholder="Mister X code (from admin)"
+          value={fugitiveCode}
+          onChange={(e) => { setFugitiveCode(e.target.value.toUpperCase()); setFugitiveError(''); }}
         />
+        {fugitiveError && <p style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>{fugitiveError}</p>}
         <button
           className="btn btn-outline"
-          disabled={!gameCode.trim()}
-          onClick={() => navigate(`/fugitive/${gameCode}`)}
+          disabled={!fugitiveCode.trim() || fugitiveLooking}
+          onClick={joinAsFugitive}
         >
-          I am Mister X
+          {fugitiveLooking ? 'Looking up…' : 'I am Mister X'}
         </button>
       </div>
 

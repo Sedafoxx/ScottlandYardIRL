@@ -1,14 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import JSZip from 'jszip';
 import heic2any from 'heic2any';
 import { db } from '../firebase/config';
-import { ref, onValue, set, update, get, remove } from 'firebase/database';
+import { ref, onValue, set, update, get, remove, push } from 'firebase/database';
 import { CHALLENGES } from '../data/challenges';
 import { PUZZLES, WORDLE_WORDS, EQUATION_PUZZLES, POWER_UP_RIDDLES } from '../data/puzzles';
-import { generateHint, DIFFICULTY_CONFIG, STARTING_RADIUS } from '../utils/hints';
-import { POWER_UP_CONFIG } from '../data/powerUps';
+import { generateHint, DIFFICULTY_CONFIG, STARTING_RADIUS, haversineDistance } from '../utils/hints';
+import { POWER_UP_CONFIG, TRANSPORT_TYPES } from '../data/powerUps';
 import ChatPane from '../components/Chat/ChatPane';
+
+const TRANSPORT_MAP = Object.fromEntries(TRANSPORT_TYPES.map(t => [t.key, t]));
 
 function HeicSafeImage({ src, alt, style }) {
   const [displaySrc, setDisplaySrc] = useState(src);
@@ -183,6 +185,109 @@ export default function AdminPage() {
   const [powerUpChallengeDiff, setPowerUpChallengeDiff] = useState('medium');
   const [launchingPowerUp, setLaunchingPowerUp] = useState(false);
 
+  // Inline Mister X controls
+  const [iAmFugitive, setIAmFugitive] = useState(false);
+  const [fugAdminLastPos, setFugAdminLastPos] = useState(null);
+  const [fugAdminGpsError, setFugAdminGpsError] = useState('');
+  const [fugAdminTransportType, setFugAdminTransportType] = useState('ubahn');
+  const [fugAdminTransportStops, setFugAdminTransportStops] = useState(1);
+  const [fugAdminAnnouncing, setFugAdminAnnouncing] = useState(false);
+  const fugAdminWatchRef = useRef(null);
+  const activeGameRef = useRef(null);
+
+  // Per-team chat unread tracking
+  const [chatUnreadMap, setChatUnreadMap] = useState({});
+  const chatTargetRef = useRef(chatTarget);
+
+  // Keep chatTargetRef in sync for use inside Firebase listeners
+  useEffect(() => { chatTargetRef.current = chatTarget; }, [chatTarget]);
+
+  // Reset fugitive mode when game changes
+  useEffect(() => {
+    setIAmFugitive(false);
+    setFugAdminLastPos(null);
+    setFugAdminGpsError('');
+  }, [activeGameCode]);
+
+  // Admin GPS tracking when "I am Mister X" is active
+  useEffect(() => {
+    if (!iAmFugitive || !activeGameCode) {
+      if (fugAdminWatchRef.current != null) {
+        navigator.geolocation.clearWatch(fugAdminWatchRef.current);
+        fugAdminWatchRef.current = null;
+      }
+      return;
+    }
+    if (!navigator.geolocation) {
+      setFugAdminGpsError('Geolocation not supported on this device.');
+      return;
+    }
+    fugAdminWatchRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const timestamp = Date.now();
+        setFugAdminLastPos({ lat, lng, timestamp });
+        setFugAdminGpsError('');
+        set(ref(db, `games/${activeGameCode}/fugitive/lastUpdate`), { lat, lng, timestamp });
+        // Update hint circles if fugitive moved outside any team's zone
+        const teamsSnap = activeGameRef.current?.teams;
+        if (teamsSnap) {
+          const updates = {};
+          Object.entries(teamsSnap).forEach(([tName, tData]) => {
+            const hint = tData.currentHint;
+            if (!hint) return;
+            if (haversineDistance(lat, lng, hint.lat, hint.lng) > hint.radius) {
+              updates[`${tName}/currentHint`] = generateHint(lat, lng, hint.radius);
+            }
+          });
+          if (Object.keys(updates).length > 0) {
+            update(ref(db, `games/${activeGameCode}/teams`), updates);
+          }
+        }
+      },
+      (err) => setFugAdminGpsError(`GPS error: ${err.message}`),
+      { enableHighAccuracy: true }
+    );
+    return () => {
+      if (fugAdminWatchRef.current != null) {
+        navigator.geolocation.clearWatch(fugAdminWatchRef.current);
+        fugAdminWatchRef.current = null;
+      }
+    };
+  }, [iAmFugitive, activeGameCode]);
+
+  // Per-team unread message tracking (background listener)
+  useEffect(() => {
+    if (!activeGameCode) return;
+    let initialized = false;
+    const latestPerTeam = {};
+
+    const unsub = onValue(ref(db, `games/${activeGameCode}/messages/teams`), (snap) => {
+      const allTeamMsgs = snap.val() ?? {};
+      const newLatest = {};
+      Object.entries(allTeamMsgs).forEach(([teamName, msgs]) => {
+        const timestamps = Object.values(msgs).map(m => m.timestamp ?? 0);
+        newLatest[teamName] = Math.max(...timestamps, 0);
+      });
+
+      if (!initialized) {
+        Object.assign(latestPerTeam, newLatest);
+        initialized = true;
+        return;
+      }
+
+      Object.entries(newLatest).forEach(([teamName, ts]) => {
+        if (ts > (latestPerTeam[teamName] ?? 0) && chatTargetRef.current !== teamName) {
+          setChatUnreadMap(m => ({ ...m, [teamName]: true }));
+        }
+        latestPerTeam[teamName] = ts;
+      });
+    });
+
+    return () => unsub();
+  }, [activeGameCode]);
+
   const submitPassword = () => {
     if (pwInput === ADMIN_PASSWORD) {
       sessionStorage.setItem('adminAuthed', '1');
@@ -226,17 +331,26 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!activeGameCode) return;
-    const unsub = onValue(ref(db, `games/${activeGameCode}`), (snap) => setActiveGame(snap.val()));
+    const unsub = onValue(ref(db, `games/${activeGameCode}`), (snap) => {
+      const val = snap.val();
+      setActiveGame(val);
+      activeGameRef.current = val;
+    });
     return () => unsub();
   }, [activeGameCode]);
 
   const createGame = async () => {
     const code = generateCode();
-    await set(ref(db, `games/${code}`), {
-      status: 'waiting',
-      createdAt: Date.now(),
-      riddles: buildRiddles(),
-    });
+    const fugCode = generateCode();
+    await Promise.all([
+      set(ref(db, `games/${code}`), {
+        status: 'waiting',
+        createdAt: Date.now(),
+        fugitiveCode: fugCode,
+        riddles: buildRiddles(),
+      }),
+      set(ref(db, `fugitiveCodes/${fugCode}`), code),
+    ]);
     setActiveGameCode(code);
   };
 
@@ -410,6 +524,23 @@ export default function AdminPage() {
     });
   };
 
+  const announceAdminTransport = async () => {
+    setFugAdminAnnouncing(true);
+    const t = TRANSPORT_MAP[fugAdminTransportType];
+    const announcedAt = Date.now();
+    const stops = fugAdminTransportType === 'foot' ? null : fugAdminTransportStops;
+    await set(ref(db, `games/${activeGameCode}/fugitive/lastTransport`), {
+      type: fugAdminTransportType, stops, announcedAt,
+    });
+    const label = stops != null
+      ? `${t.emoji} Mister X: ${t.label} — ${stops} stop${stops !== 1 ? 's' : ''}`
+      : `${t.emoji} Mister X: ${t.label}`;
+    await push(ref(db, `games/${activeGameCode}/messages/global`), {
+      text: label, sender: 'Mister X', timestamp: announcedAt,
+    });
+    setFugAdminAnnouncing(false);
+  };
+
   // Derived data
   const teams = activeGame?.teams ? Object.entries(activeGame.teams) : [];
   const riddles = activeGame?.riddles ? Object.values(activeGame.riddles) : [];
@@ -465,7 +596,7 @@ export default function AdminPage() {
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>{activeGameCode}</h2>
                 <p className="text-muted" style={{ textTransform: 'capitalize' }}>Status: {activeGame.status}</p>
               </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 {activeGame.status === 'waiting' && (
                   <button className="btn btn-success" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={startGame}>Start</button>
                 )}
@@ -487,10 +618,108 @@ export default function AdminPage() {
                 </button>
               </div>
             </div>
-            <p style={{ fontSize: '0.875rem', color: 'var(--color-accent)' }}>
-              Share code <strong>{activeGameCode}</strong> with players
-            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--color-hunter)' }}>
+                Teams: <strong>{activeGameCode}</strong>
+              </p>
+              <p style={{ fontSize: '0.875rem', color: 'var(--color-fugitive)' }}>
+                Mister X: <strong>{activeGame.fugitiveCode ?? '…'}</strong>
+              </p>
+            </div>
+            <button
+              className="btn btn-outline"
+              style={{
+                borderColor: iAmFugitive ? 'var(--color-fugitive)' : undefined,
+                color: iAmFugitive ? 'var(--color-fugitive)' : undefined,
+              }}
+              onClick={() => setIAmFugitive(v => !v)}
+            >
+              {iAmFugitive ? '🏃 Mister X Active — tap to stop' : 'I am Mister X'}
+            </button>
           </div>
+
+          {/* Inline Mister X panel */}
+          {iAmFugitive && (() => {
+            const nearbyTeams = fugAdminLastPos && activeGame?.teams
+              ? Object.entries(activeGame.teams)
+                  .filter(([, t]) => t.location)
+                  .map(([name, t]) => ({
+                    name,
+                    distance: Math.round(haversineDistance(fugAdminLastPos.lat, fugAdminLastPos.lng, t.location.lat, t.location.lng)),
+                  }))
+                  .filter(t => t.distance <= 50)
+                  .sort((a, b) => a.distance - b.distance)
+              : [];
+            return (
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderLeft: '4px solid var(--color-fugitive)' }}>
+                <h2 style={{ fontSize: '1rem', color: 'var(--color-fugitive)' }}>You are Mister X</h2>
+
+                {nearbyTeams.length > 0 && (
+                  <div style={{ background: '#e74c3c', borderRadius: '10px', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <p style={{ fontWeight: 800, color: '#fff' }}>🚨 DANGER — Team Close!</p>
+                    {nearbyTeams.map(t => (
+                      <p key={t.name} style={{ color: 'rgba(255,255,255,0.9)', fontSize: '0.875rem' }}>
+                        {t.name} is {t.distance}m away
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {fugAdminGpsError ? (
+                  <p style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>{fugAdminGpsError}</p>
+                ) : fugAdminLastPos ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--color-success)', display: 'inline-block', boxShadow: '0 0 0 3px color-mix(in srgb, var(--color-success) 30%, transparent)' }} />
+                    <span style={{ fontSize: '0.875rem', color: 'var(--color-success)' }}>
+                      Tracking · {new Date(fugAdminLastPos.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-muted" style={{ fontSize: '0.875rem' }}>Acquiring GPS signal…</p>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Announce Movement</p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                    {TRANSPORT_TYPES.map(t => (
+                      <button
+                        key={t.key}
+                        className="btn btn-outline"
+                        style={{
+                          padding: '0.3rem 0.6rem', fontSize: '0.78rem',
+                          borderColor: fugAdminTransportType === t.key ? 'var(--color-fugitive)' : undefined,
+                          color: fugAdminTransportType === t.key ? 'var(--color-fugitive)' : undefined,
+                        }}
+                        onClick={() => setFugAdminTransportType(t.key)}
+                      >
+                        {t.emoji} {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  {fugAdminTransportType !== 'foot' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <label style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>Stops:</label>
+                      <input
+                        type="number"
+                        min="1" max="20"
+                        value={fugAdminTransportStops}
+                        onChange={e => setFugAdminTransportStops(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                        style={{ width: '4rem' }}
+                      />
+                    </div>
+                  )}
+                  <button
+                    className="btn btn-primary"
+                    style={{ background: 'var(--color-fugitive)', borderColor: 'var(--color-fugitive)' }}
+                    onClick={announceAdminTransport}
+                    disabled={fugAdminAnnouncing}
+                  >
+                    {fugAdminAnnouncing ? 'Announcing…' : 'Announce to Detectives'}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Power Ups */}
           {activeGame.status === 'active' && (
@@ -712,34 +941,73 @@ export default function AdminPage() {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <h2 style={{ fontSize: '1rem' }}>Teams ({teams.length})</h2>
             {teams.length === 0 && <p className="text-muted">No teams yet.</p>}
-            {[...teams].sort((a, b) => (b[1].score ?? 0) - (a[1].score ?? 0)).map(([name, data], i) => (
-              <div key={name} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '0.5rem 0.75rem', background: 'var(--color-bg)', borderRadius: '8px',
-                borderLeft: `3px solid ${i === 0 ? 'var(--color-accent)' : 'transparent'}`,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', width: '1rem' }}>#{i + 1}</span>
-                  <div>
-                    <span style={{ fontWeight: 600 }}>{name}</span>
-                    {data.caughtFugitive && <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', color: 'var(--color-success)', fontWeight: 700 }}>CAUGHT!</span>}
-                    <p className="text-muted" style={{ fontSize: '0.7rem' }}>Challenge {(data.currentRiddle ?? 0) + 1} / {riddles.length}</p>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontWeight: 700 }}>{data.score ?? 0} pts</span>
-                  {!data.caughtFugitive && (
-                    <button
-                      className="btn btn-success"
-                      style={{ width: 'auto', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
-                      onClick={() => awardCatch(name)}
-                    >
-                      +100 Caught!
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+            {(() => {
+              const groups = {};
+              teams.forEach(([name, data]) => {
+                const bg = data.bigTeam || name;
+                if (!groups[bg]) groups[bg] = { combined: 0, members: [] };
+                groups[bg].combined += data.score ?? 0;
+                groups[bg].members.push([name, data]);
+              });
+              return Object.entries(groups)
+                .sort((a, b) => b[1].combined - a[1].combined)
+                .map(([bgName, group], gi) => {
+                  const multi = group.members.length > 1;
+                  const sortedMembers = [...group.members].sort((a, b) => (b[1].score ?? 0) - (a[1].score ?? 0));
+                  return (
+                    <div key={bgName} style={{ borderRadius: '8px', overflow: 'hidden' }}>
+                      {/* Group header */}
+                      <div style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '0.5rem 0.75rem', background: 'var(--color-bg)',
+                        borderLeft: `3px solid ${gi === 0 ? 'var(--color-accent)' : 'transparent'}`,
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', width: '1rem' }}>#{gi + 1}</span>
+                          <span style={{ fontWeight: 700 }}>{bgName}</span>
+                          {multi && <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>{group.members.length} subteams</span>}
+                          {group.members.some(([, d]) => d.caughtFugitive) && (
+                            <span style={{ fontSize: '0.7rem', color: 'var(--color-success)', fontWeight: 700 }}>CAUGHT!</span>
+                          )}
+                        </div>
+                        <span style={{ fontWeight: 700 }}>{group.combined} pts</span>
+                      </div>
+                      {/* Individual rows */}
+                      {sortedMembers.map(([name, data]) => (
+                        <div key={name} style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          padding: multi ? '0.4rem 0.75rem 0.4rem 2.5rem' : '0.5rem 0.75rem',
+                          background: 'var(--color-bg)',
+                          borderTop: multi ? '1px solid var(--color-border)' : undefined,
+                          borderLeft: '3px solid transparent',
+                        }}>
+                          <div>
+                            <span style={{ fontWeight: multi ? 400 : 600, fontSize: multi ? '0.85rem' : undefined }}>{name}</span>
+                            {data.caughtFugitive && (
+                              <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', color: 'var(--color-success)', fontWeight: 700 }}>CAUGHT!</span>
+                            )}
+                            <p className="text-muted" style={{ fontSize: '0.7rem' }}>
+                              Challenge {(data.currentRiddle ?? 0) + 1} / {riddles.length}
+                            </p>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontWeight: multi ? 400 : 700, fontSize: multi ? '0.85rem' : undefined }}>{data.score ?? 0} pts</span>
+                            {!data.caughtFugitive && (
+                              <button
+                                className="btn btn-success"
+                                style={{ width: 'auto', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                                onClick={() => awardCatch(name)}
+                              >
+                                +100 Caught!
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                });
+            })()}
           </div>
 
           {/* Fugitive location */}
@@ -773,7 +1041,7 @@ export default function AdminPage() {
                   borderColor: chatTarget === 'global' ? 'var(--color-admin)' : undefined,
                   color: chatTarget === 'global' ? 'var(--color-admin)' : undefined,
                 }}
-                onClick={() => setChatTarget('global')}
+                onClick={() => { setChatTarget('global'); setChatUnreadMap(m => ({ ...m, global: false })); }}
               >
                 📢 All Teams
               </button>
@@ -785,10 +1053,18 @@ export default function AdminPage() {
                     width: 'auto', padding: '0.35rem 0.75rem', fontSize: '0.8rem',
                     borderColor: chatTarget === name ? 'var(--color-hunter)' : undefined,
                     color: chatTarget === name ? 'var(--color-hunter)' : undefined,
+                    position: 'relative',
                   }}
-                  onClick={() => setChatTarget(name)}
+                  onClick={() => { setChatTarget(name); setChatUnreadMap(m => ({ ...m, [name]: false })); }}
                 >
                   {name}
+                  {chatUnreadMap[name] && (
+                    <span style={{
+                      position: 'absolute', top: '-4px', right: '-4px',
+                      width: '8px', height: '8px', borderRadius: '50%',
+                      background: 'var(--color-primary)',
+                    }} />
+                  )}
                 </button>
               ))}
             </div>

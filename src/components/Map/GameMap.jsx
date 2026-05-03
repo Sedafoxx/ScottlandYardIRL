@@ -31,6 +31,13 @@ const teamIcon = L.divIcon({
   iconAnchor: [7, 7],
 });
 
+const teammateIcon = L.divIcon({
+  html: '<div style="background:#2ecc71;width:12px;height:12px;border-radius:50%;border:2px solid white;box-shadow:0 0 0 2px #2ecc71aa"></div>',
+  className: '',
+  iconSize: [12, 12],
+  iconAnchor: [6, 6],
+});
+
 const VIENNA_CENTER = [48.2082, 16.3738];
 const DEFAULT_ZOOM = 13;
 
@@ -52,7 +59,14 @@ function landmarkIcon(lm, visited) {
   });
 }
 
-export default function GameMap({ currentHint = null, fugitiveLocation = null, teamLocation = null, visitedLandmarks = {}, isAdmin = false }) {
+export default function GameMap({
+  currentHint = null,
+  fugitiveLocation = null,
+  teamLocation = null,
+  visitedLandmarks = {},
+  isAdmin = false,
+  teammateLocations = [],
+}) {
   return (
     <MapContainer
       center={VIENNA_CENTER}
@@ -99,6 +113,16 @@ export default function GameMap({ currentHint = null, fugitiveLocation = null, t
           </Popup>
         </Marker>
       )}
+
+      {/* Same-team subteam positions */}
+      {teammateLocations.map(({ name, lat, lng, timestamp }) => (
+        <Marker key={name} position={[lat, lng]} icon={teammateIcon}>
+          <Popup>
+            <strong>{name}</strong><br />
+            Updated: {new Date(timestamp).toLocaleTimeString()}
+          </Popup>
+        </Marker>
+      ))}
 
       {/* Landmark bonus locations */}
       {LANDMARKS.map(lm => {

@@ -9,6 +9,7 @@ export default function MapPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const teamName = searchParams.get('name');
+  const bigTeam = searchParams.get('bigTeam') || teamName;
   const isAdmin = searchParams.get('admin') === 'true';
 
   const [game, setGame] = useState(null);
@@ -31,6 +32,13 @@ export default function MapPage() {
   const fugitiveLocation = (isAdmin || liveFeedActive) ? game?.fugitive?.lastUpdate : null;
   const teamLocation = !isAdmin && teamData?.location ? teamData.location : null;
 
+  // Other subteams of same big team that have GPS enabled
+  const teammateLocations = !isAdmin && bigTeam && game?.teams
+    ? Object.entries(game.teams)
+        .filter(([n, d]) => n !== teamName && (d.bigTeam || n) === bigTeam && d.location)
+        .map(([n, d]) => ({ name: n, lat: d.location.lat, lng: d.location.lng, timestamp: d.location.timestamp }))
+    : [];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <div style={{
@@ -52,6 +60,11 @@ export default function MapPage() {
                   ? `Zone hint active — ${currentHint.radius}m radius`
                   : 'No hint yet — complete a challenge'}
           </p>
+          {!isAdmin && teammateLocations.length > 0 && (
+            <p style={{ fontSize: '0.7rem', color: '#2ecc71', marginTop: '0.1rem' }}>
+              ● {teammateLocations.length} teammate{teammateLocations.length !== 1 ? 's' : ''} on map
+            </p>
+          )}
         </div>
         <button
           className="btn btn-outline"
@@ -69,6 +82,7 @@ export default function MapPage() {
           teamLocation={teamLocation}
           visitedLandmarks={teamData?.visitedLandmarks ?? {}}
           isAdmin={isAdmin}
+          teammateLocations={teammateLocations}
         />
       </div>
     </div>

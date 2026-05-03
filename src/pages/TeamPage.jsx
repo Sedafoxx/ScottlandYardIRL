@@ -281,6 +281,7 @@ export default function TeamPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const teamName = searchParams.get('name') || 'Unknown Team';
+  const bigTeam = searchParams.get('bigTeam') || teamName;
 
   const [game, setGame] = useState(null);
   const [teamData, setTeamData] = useState(null);
@@ -289,6 +290,7 @@ export default function TeamPage() {
   const [gpsEnabled, setGpsEnabled] = useState(false);
   const [teamLocation, setTeamLocation] = useState(null);
   const [chatUnread, setChatUnread] = useState(0);
+  const [teamChatUnread, setTeamChatUnread] = useState(0);
   const [activeLandmark, setActiveLandmark] = useState(null);
   const [rulesOpen, setRulesOpen] = useState(false);
   const gpsWatchRef = useRef(null);
@@ -303,7 +305,7 @@ export default function TeamPage() {
       if (!snap.exists()) return;
       get(teamRef).then((teamSnap) => {
         if (!teamSnap.exists()) {
-          set(teamRef, { score: 0, currentRiddle: 0 });
+          set(teamRef, { score: 0, currentRiddle: 0, bigTeam });
         }
       });
     });
@@ -497,7 +499,7 @@ export default function TeamPage() {
             style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem', flexShrink: 0 }}
             onClick={() => {
             const livefeed = teamData?.liveFeedUntil > Date.now() ? `&livefeed=${teamData.liveFeedUntil}` : '';
-            navigate(`/map/${gameCode}?name=${encodeURIComponent(teamName)}${livefeed}`);
+            navigate(`/map/${gameCode}?name=${encodeURIComponent(teamName)}&bigTeam=${encodeURIComponent(bigTeam)}${livefeed}`);
           }}
           >
             Map
@@ -517,6 +519,18 @@ export default function TeamPage() {
         unreadCount={chatUnread}
         onNewMessage={() => setChatUnread(n => n + 1)}
         onMarkRead={() => setChatUnread(0)}
+      />
+
+      <ChatPane
+        gameCode={gameCode}
+        senderName={teamName}
+        globalPath={null}
+        privatePath={`messages/bigteam/${bigTeam}`}
+        sendPath={`messages/bigteam/${bigTeam}`}
+        title={`${bigTeam} — Team Chat`}
+        unreadCount={teamChatUnread}
+        onNewMessage={() => setTeamChatUnread(n => n + 1)}
+        onMarkRead={() => setTeamChatUnread(0)}
       />
 
       {/* Active power up effects */}
@@ -564,7 +578,7 @@ export default function TeamPage() {
           style={{ flex: 1 }}
           onClick={() => {
             const livefeed = teamData?.liveFeedUntil > Date.now() ? `&livefeed=${teamData.liveFeedUntil}` : '';
-            navigate(`/map/${gameCode}?name=${encodeURIComponent(teamName)}${livefeed}`);
+            navigate(`/map/${gameCode}?name=${encodeURIComponent(teamName)}&bigTeam=${encodeURIComponent(bigTeam)}${livefeed}`);
           }}
         >
           Open Map
