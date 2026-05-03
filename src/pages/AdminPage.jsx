@@ -4,10 +4,10 @@ import JSZip from 'jszip';
 import heic2any from 'heic2any';
 import { db } from '../firebase/config';
 import { ref, onValue, set, update, get, remove, push } from 'firebase/database';
-import { CHALLENGES } from '../data/challenges';
-import { PUZZLES, WORDLE_WORDS, EQUATION_PUZZLES, POWER_UP_RIDDLES } from '../data/puzzles';
+import { PUZZLES, WORDLE_WORDS, POWER_UP_RIDDLES } from '../data/puzzles';
 import { generateHint, DIFFICULTY_CONFIG, STARTING_RADIUS, haversineDistance } from '../utils/hints';
 import { POWER_UP_CONFIG, TRANSPORT_TYPES } from '../data/powerUps';
+import { RIDDLE_COUNT } from '../utils/riddles';
 import ChatPane from '../components/Chat/ChatPane';
 
 const TRANSPORT_MAP = Object.fromEntries(TRANSPORT_TYPES.map(t => [t.key, t]));
@@ -35,136 +35,6 @@ function generateCode() {
   return Math.random().toString(36).substring(2, 7).toUpperCase();
 }
 
-function shuffleSlice(arr, n) {
-  return [...arr].sort(() => Math.random() - 0.5).slice(0, n);
-}
-
-function randomCode(length, range) {
-  return Array.from({ length }, () => Math.floor(Math.random() * range) + 1).join('');
-}
-
-function buildRiddles() {
-  // 12 photo + 3 puzzle + 3 wordle + 3 mastermind + 3 equation + 1 poem = 25 riddles total
-  // Each non-photo slot has easy/medium/hard options — players choose at play time.
-  const photoEasy   = shuffleSlice(CHALLENGES.easy,   12);
-  const photoMedium = shuffleSlice(CHALLENGES.medium, 12);
-  const photoHard   = shuffleSlice(CHALLENGES.hard,   12);
-
-  const photoSlots = Array.from({ length: 12 }, (_, i) => ({
-    type: 'photo',
-    options: [
-      { difficulty: 'easy',   reduction: DIFFICULTY_CONFIG.easy.reduction,   ...photoEasy[i]   },
-      { difficulty: 'medium', reduction: DIFFICULTY_CONFIG.medium.reduction,  ...photoMedium[i] },
-      { difficulty: 'hard',   reduction: DIFFICULTY_CONFIG.hard.reduction,    ...photoHard[i]   },
-    ],
-  }));
-
-  const puzzleEasy   = shuffleSlice(PUZZLES.easy,   3);
-  const puzzleMedium = shuffleSlice(PUZZLES.medium, 3);
-  const puzzleHard   = shuffleSlice(PUZZLES.hard,   3);
-
-  const mkPuzzleOpt = (p, diff) => ({
-    difficulty: diff,
-    question: p.question,
-    answer: p.answer,
-    points: DIFFICULTY_CONFIG[diff].points,
-    reduction: DIFFICULTY_CONFIG[diff].reduction,
-  });
-
-  const puzzleSlots = Array.from({ length: 3 }, (_, i) => ({
-    type: 'puzzle',
-    options: {
-      easy:   mkPuzzleOpt(puzzleEasy[i],   'easy'),
-      medium: mkPuzzleOpt(puzzleMedium[i], 'medium'),
-      hard:   mkPuzzleOpt(puzzleHard[i],   'hard'),
-    },
-  }));
-
-  const wordleEasy   = shuffleSlice(WORDLE_WORDS.easy,   3);
-  const wordleMedium = shuffleSlice(WORDLE_WORDS.medium, 3);
-  const wordleHard   = shuffleSlice(WORDLE_WORDS.hard,   3);
-
-  const mkWordleOpt = (w, diff) => ({
-    difficulty: diff,
-    answer: w.answer,
-    hint: w.hint,
-    points: DIFFICULTY_CONFIG[diff].points,
-    reduction: DIFFICULTY_CONFIG[diff].reduction,
-  });
-
-  const wordleSlots = Array.from({ length: 3 }, (_, i) => ({
-    type: 'wordle',
-    options: {
-      easy:   mkWordleOpt(wordleEasy[i],   'easy'),
-      medium: mkWordleOpt(wordleMedium[i], 'medium'),
-      hard:   mkWordleOpt(wordleHard[i],   'hard'),
-    },
-  }));
-
-  const MASTERMIND_SETTINGS = {
-    easy:   { codeLength: 3, digitRange: 4, maxAttempts: 10 },
-    medium: { codeLength: 4, digitRange: 6, maxAttempts: 8 },
-    hard:   { codeLength: 4, digitRange: 6, maxAttempts: 6 },
-  };
-
-  const mkMastermindOpt = (diff) => {
-    const s = MASTERMIND_SETTINGS[diff];
-    return {
-      difficulty: diff,
-      answer: randomCode(s.codeLength, s.digitRange),
-      codeLength: s.codeLength,
-      digitRange: s.digitRange,
-      maxAttempts: s.maxAttempts,
-      points: DIFFICULTY_CONFIG[diff].points,
-      reduction: DIFFICULTY_CONFIG[diff].reduction,
-    };
-  };
-
-  const mastermindSlots = Array.from({ length: 3 }, () => ({
-    type: 'mastermind',
-    options: {
-      easy:   mkMastermindOpt('easy'),
-      medium: mkMastermindOpt('medium'),
-      hard:   mkMastermindOpt('hard'),
-    },
-  }));
-
-  const equationEasy   = shuffleSlice(EQUATION_PUZZLES.easy,   3);
-  const equationMedium = shuffleSlice(EQUATION_PUZZLES.medium, 3);
-  const equationHard   = shuffleSlice(EQUATION_PUZZLES.hard,   3);
-
-  const mkEquationOpt = (p, diff) => ({
-    difficulty: diff,
-    tiles: p.tiles,
-    points: DIFFICULTY_CONFIG[diff].points,
-    reduction: DIFFICULTY_CONFIG[diff].reduction,
-  });
-
-  const equationSlots = Array.from({ length: 3 }, (_, i) => ({
-    type: 'equation',
-    options: {
-      easy:   mkEquationOpt(equationEasy[i],   'easy'),
-      medium: mkEquationOpt(equationMedium[i], 'medium'),
-      hard:   mkEquationOpt(equationHard[i],   'hard'),
-    },
-  }));
-
-  const shuffledRiddles = [...puzzleSlots, ...wordleSlots, ...mastermindSlots, ...equationSlots].sort(() => Math.random() - 0.5);
-  const shuffledPhotos = [...photoSlots].sort(() => Math.random() - 0.5);
-
-  // Alternate: riddle, photo, riddle, photo, …
-  const allSlots = [];
-  for (let i = 0; i < 12; i++) {
-    allSlots.push(shuffledRiddles[i]);
-    allSlots.push(shuffledPhotos[i]);
-  }
-
-  const riddles = {
-    0: { type: 'poem', question: 'Complete the poem: "Welcome to Scotland Yard, Vienna Edition…"' },
-  };
-  allSlots.forEach((slot, i) => { riddles[i + 1] = slot; });
-  return riddles;
-}
 
 const ADMIN_PASSWORD = 'scottlandyardirl';
 
@@ -347,7 +217,6 @@ export default function AdminPage() {
         status: 'waiting',
         createdAt: Date.now(),
         fugitiveCode: fugCode,
-        riddles: buildRiddles(),
       }),
       set(ref(db, `fugitiveCodes/${fugCode}`), code),
     ]);
@@ -543,7 +412,7 @@ export default function AdminPage() {
 
   // Derived data
   const teams = activeGame?.teams ? Object.entries(activeGame.teams) : [];
-  const riddles = activeGame?.riddles ? Object.values(activeGame.riddles) : [];
+  const riddles = []; // riddle sets are now per-subteam, stored in game.riddleSets
   const fugitiveLocation = activeGame?.fugitive?.lastUpdate;
 
   // Collect all pending submissions across teams
@@ -987,7 +856,7 @@ export default function AdminPage() {
                               <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', color: 'var(--color-success)', fontWeight: 700 }}>CAUGHT!</span>
                             )}
                             <p className="text-muted" style={{ fontSize: '0.7rem' }}>
-                              Challenge {(data.currentRiddle ?? 0) + 1} / {riddles.length}
+                              Challenge {(data.currentRiddle ?? 0) + 1} / {RIDDLE_COUNT}
                             </p>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -1078,60 +947,6 @@ export default function AdminPage() {
             />
           </div>
 
-          {/* Challenge list (read-only) */}
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <h2 style={{ fontSize: '1rem' }}>Challenges ({riddles.length})</h2>
-            {riddles.map((r, i) => {
-              const borderColor = r.type === 'poem'
-                ? 'var(--color-accent)'
-                : r.type === 'photo'
-                  ? 'var(--color-hunter)'
-                  : 'var(--color-border)';
-              return (
-                <div key={i} style={{
-                  padding: '0.5rem 0.75rem', background: 'var(--color-bg)',
-                  borderRadius: '8px', fontSize: '0.8rem',
-                  borderLeft: `3px solid ${borderColor}`,
-                }}>
-                  <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
-                    #{i + 1} ·{' '}
-                    {r.type === 'poem' && 'Poem (admin review, +10 pts)'}
-                    {r.type === 'photo' && 'Photo challenge (player choice)'}
-                    {r.type === 'puzzle' && 'Puzzle (player choice, auto-checked)'}
-                    {r.type === 'wordle' && 'Wordle (player choice, auto-checked)'}
-                    {r.type === 'mastermind' && 'Code Cracker (player choice, auto-checked)'}
-                    {r.type === 'equation' && 'Equation (player choice, auto-checked)'}
-                  </p>
-                  {r.type === 'photo' && r.options?.map((opt) => (
-                    <p key={opt.difficulty} className="text-muted" style={{ marginBottom: '0.1rem' }}>
-                      <strong style={{ color: DIFFICULTY_CONFIG[opt.difficulty]?.color }}>{opt.difficulty}</strong>: {opt.challenge}
-                    </p>
-                  ))}
-                  {r.type === 'poem' && <p className="text-muted">{r.question}</p>}
-                  {r.type === 'puzzle' && r.options && Object.entries(r.options).map(([diff, opt]) => (
-                    <p key={diff} className="text-muted" style={{ marginBottom: '0.1rem' }}>
-                      <strong style={{ color: DIFFICULTY_CONFIG[diff]?.color }}>{diff}</strong>: {opt.question}
-                    </p>
-                  ))}
-                  {r.type === 'wordle' && r.options && Object.entries(r.options).map(([diff, opt]) => (
-                    <p key={diff} className="text-muted" style={{ marginBottom: '0.1rem' }}>
-                      <strong style={{ color: DIFFICULTY_CONFIG[diff]?.color }}>{diff}</strong>: {opt.answer} · {opt.hint}
-                    </p>
-                  ))}
-                  {r.type === 'mastermind' && r.options && Object.entries(r.options).map(([diff, opt]) => (
-                    <p key={diff} className="text-muted" style={{ marginBottom: '0.1rem' }}>
-                      <strong style={{ color: DIFFICULTY_CONFIG[diff]?.color }}>{diff}</strong>: {opt.codeLength} digits (1–{opt.digitRange}) · {opt.maxAttempts} attempts
-                    </p>
-                  ))}
-                  {r.type === 'equation' && r.options && Object.entries(r.options).map(([diff, opt]) => (
-                    <p key={diff} className="text-muted" style={{ marginBottom: '0.1rem' }}>
-                      <strong style={{ color: DIFFICULTY_CONFIG[diff]?.color }}>{diff}</strong>: {opt.tiles.join(' ')}
-                    </p>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
         </>
       )}
     </div>

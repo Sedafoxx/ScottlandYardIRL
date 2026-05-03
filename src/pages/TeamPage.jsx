@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import heic2any from 'heic2any';
 import { db, storage } from '../firebase/config';
-import { ref, onValue, set, get, update, remove } from 'firebase/database';
+import { ref, onValue, set, get, update, remove, runTransaction } from 'firebase/database';
+import { buildRiddles } from '../utils/riddles';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import RiddleCard from '../components/Riddle/RiddleCard';
 import ChatPane from '../components/Chat/ChatPane';
@@ -282,6 +283,7 @@ export default function TeamPage() {
   const navigate = useNavigate();
   const teamName = searchParams.get('name') || 'Unknown Team';
   const bigTeam = searchParams.get('bigTeam') || teamName;
+  const subteamKey = searchParams.get('subteam') || 'none';
 
   const [game, setGame] = useState(null);
   const [teamData, setTeamData] = useState(null);
@@ -301,13 +303,19 @@ export default function TeamPage() {
     const teamRef = ref(db, `games/${gameCode}/teams/${teamName}`);
 
     // Only register the team if the game actually exists
-    get(gameRef).then((snap) => {
+    get(gameRef).then(async (snap) => {
       if (!snap.exists()) return;
-      get(teamRef).then((teamSnap) => {
-        if (!teamSnap.exists()) {
-          set(teamRef, { score: 0, currentRiddle: 0, bigTeam });
-        }
+      // Ensure riddle set for this subteam key exists (atomic — handles simultaneous joins)
+      const newRiddles = buildRiddles();
+      await runTransaction(ref(db, `games/${gameCode}/riddleSets/${subteamKey}`), (current) => {
+        if (current === null) return newRiddles;
+        return; // already exists — abort write, keep existing
       });
+      // Register this subteam if first device
+      const teamSnap = await get(teamRef);
+      if (!teamSnap.exists()) {
+        set(teamRef, { score: 0, currentRiddle: 0, bigTeam });
+      }
     });
 
     const unsub = onValue(gameRef, (snapshot) => {
@@ -370,7 +378,7 @@ export default function TeamPage() {
     </div>
   );
 
-  const riddles = game?.riddles ? Object.values(game.riddles) : [];
+  const riddles = game?.riddleSets?.[subteamKey] ? Object.values(game.riddleSets[subteamKey]) : [];
   const currentRiddleIndex = teamData?.currentRiddle ?? 0;
   const currentRiddle = riddles[currentRiddleIndex];
   const currentHint = teamData?.currentHint ?? null;

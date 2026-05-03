@@ -17,7 +17,8 @@ export default function StartPage() {
       ? `${teamName.trim()} ${subteamNum.trim()}`
       : teamName.trim();
     const bigTeam = teamName.trim();
-    navigate(`/team/${gameCode}?name=${encodeURIComponent(fullName)}&bigTeam=${encodeURIComponent(bigTeam)}`);
+    const subteamKey = subteamNum.trim() || 'none';
+    navigate(`/team/${gameCode}?name=${encodeURIComponent(fullName)}&bigTeam=${encodeURIComponent(bigTeam)}&subteam=${subteamKey}`);
   };
 
   const joinAsFugitive = async () => {
