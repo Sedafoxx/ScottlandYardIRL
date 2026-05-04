@@ -21,8 +21,14 @@ export default function FugitivePage() {
   const [announcing, setAnnouncing] = useState(false);
   const [selfieUploading, setSelfieUploading] = useState(false);
   const [selfieError, setSelfieError] = useState('');
+  const [now, setNow] = useState(Date.now());
   const gameDataRef = useRef(null);
   const selfieInputRef = useRef();
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const unsub = onValue(ref(db, `games/${gameCode}`), (snap) => {
@@ -48,6 +54,7 @@ export default function FugitivePage() {
         const timestamp = Date.now();
         setLastPos({ lat, lng, timestamp });
         setGpsError('');
+        if ((gameDataRef.current?.fugitive?.undercover?.until ?? 0) > Date.now()) return;
         set(ref(db, `games/${gameCode}/fugitive/lastUpdate`), { lat, lng, timestamp });
 
         // Recalculate any team's hint circle the fugitive has moved outside of
@@ -74,6 +81,16 @@ export default function FugitivePage() {
 
     return () => navigator.geolocation.clearWatch(watchId);
   }, [gameCode]);
+
+  const goUndercover = async () => {
+    const t = Date.now();
+    await set(ref(db, `games/${gameCode}/fugitive/undercover`), { usedAt: t, until: t + 60_000 });
+    await push(ref(db, `games/${gameCode}/messages/global`), {
+      text: '🕶️ Mister X went undercover! Location hidden for 1 minute.',
+      sender: 'System',
+      timestamp: t,
+    });
+  };
 
   const announceTransport = async () => {
     setAnnouncing(true);
@@ -115,6 +132,12 @@ export default function FugitivePage() {
     setSelfieUploading(false);
     e.target.value = '';
   };
+
+  const undercoverData = game?.fugitive?.undercover ?? null;
+  const isUndercover = (undercoverData?.until ?? 0) > now;
+  const onCooldown = !isUndercover && (undercoverData?.usedAt ?? 0) + 600_000 > now;
+  const undercoverRemaining = Math.ceil(((undercoverData?.until ?? 0) - now) / 1000);
+  const cooldownRemaining = Math.ceil(((undercoverData?.usedAt ?? 0) + 600_000 - now) / 1000);
 
   // Teams within 50 metres (derived from current GPS + team locations)
   const nearbyTeams = lastPos && game?.teams
@@ -225,6 +248,35 @@ export default function FugitivePage() {
           Teams get approximate zone hints when they solve riddles — not your exact position.
           Keep this page open to stay tracked.
         </p>
+      </div>
+
+      {/* Undercover mode */}
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderLeft: isUndercover ? '4px solid #888' : undefined }}>
+        <h2 style={{ fontSize: '1rem', color: 'var(--color-fugitive)' }}>Undercover Mode</h2>
+        <p className="text-muted" style={{ fontSize: '0.8rem' }}>
+          Hide your location for 1 minute — your GPS stops updating for all teams. Usable once every 10 minutes.
+        </p>
+        {isUndercover && (
+          <p style={{ fontSize: '0.875rem', fontWeight: 700, color: '#aaa' }}>
+            🕶️ Hidden — reveals in {undercoverRemaining}s
+          </p>
+        )}
+        <button
+          className="btn"
+          style={{
+            background: isUndercover || onCooldown ? 'var(--color-surface)' : 'var(--color-fugitive)',
+            color: isUndercover || onCooldown ? 'var(--color-text-muted)' : '#fff',
+            borderColor: isUndercover || onCooldown ? 'var(--color-border)' : 'var(--color-fugitive)',
+          }}
+          onClick={goUndercover}
+          disabled={isUndercover || onCooldown}
+        >
+          {isUndercover
+            ? `🕶️ Undercover (${undercoverRemaining}s)`
+            : onCooldown
+              ? `⏳ Cooldown — ${Math.floor(cooldownRemaining / 60)}:${String(cooldownRemaining % 60).padStart(2, '0')}`
+              : '🕶️ Go Undercover'}
+        </button>
       </div>
 
       {/* Transport announcement */}

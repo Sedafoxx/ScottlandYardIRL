@@ -99,6 +99,7 @@ export default function AdminPage() {
         const timestamp = Date.now();
         setFugAdminLastPos({ lat, lng, timestamp });
         setFugAdminGpsError('');
+        if ((activeGameRef.current?.fugitive?.undercover?.until ?? 0) > Date.now()) return;
         set(ref(db, `games/${activeGameCode}/fugitive/lastUpdate`), { lat, lng, timestamp });
         // Update hint circles if fugitive moved outside any team's zone
         const teamsSnap = activeGameRef.current?.teams;
@@ -533,6 +534,17 @@ export default function AdminPage() {
                     ))}
                   </div>
                 )}
+
+                {(() => {
+                  const uc = activeGame?.fugitive?.undercover;
+                  const ucActive = (uc?.until ?? 0) > Date.now();
+                  if (ucActive) return (
+                    <p style={{ fontSize: '0.875rem', fontWeight: 700, color: '#aaa' }}>
+                      🕶️ Undercover active — GPS hidden from teams
+                    </p>
+                  );
+                  return null;
+                })()}
 
                 {fugAdminGpsError ? (
                   <p style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>{fugAdminGpsError}</p>

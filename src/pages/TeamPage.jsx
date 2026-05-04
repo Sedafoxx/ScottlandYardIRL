@@ -388,6 +388,7 @@ export default function TeamPage() {
   const currentHint = teamData?.currentHint ?? null;
   const leaderboardTeams = game?.teams ? Object.entries(game.teams) : [];
   const liveFeedActive = (teamData?.liveFeedUntil ?? 0) > Date.now();
+  const fugitiveUndercover = (game?.fugitive?.undercover?.until ?? 0) > Date.now();
   const teammateLocations = game?.teams
     ? Object.entries(game.teams)
         .filter(([n, d]) => n !== teamName && (d.bigTeam === bigTeam || n === bigTeam || n.startsWith(bigTeam + ' ')) && d.location)
@@ -645,11 +646,13 @@ export default function TeamPage() {
             <div>
               <p style={{ fontWeight: 700 }}>{teamName}</p>
               <p className="text-muted" style={{ fontSize: '0.75rem' }}>
-                {liveFeedActive
-                  ? '📡 Live Feed — Mister X visible!'
-                  : currentHint
-                    ? `Zone hint — ${currentHint.radius}m radius`
-                    : 'No hint yet'}
+                {fugitiveUndercover
+                  ? '🕶️ Mister X is undercover'
+                  : liveFeedActive
+                    ? '📡 Live Feed — Mister X visible!'
+                    : currentHint
+                      ? `Zone hint — ${currentHint.radius}m radius`
+                      : 'No hint yet'}
               </p>
               {teammateLocations.length > 0 && (
                 <p style={{ fontSize: '0.7rem', color: '#2ecc71', marginTop: '0.1rem' }}>
@@ -675,7 +678,7 @@ export default function TeamPage() {
           <div style={{ flex: 1 }}>
             <GameMap
               currentHint={currentHint}
-              fugitiveLocation={liveFeedActive ? game?.fugitive?.lastUpdate : null}
+              fugitiveLocation={liveFeedActive && !fugitiveUndercover ? game?.fugitive?.lastUpdate : null}
               teamLocation={teamLocation}
               visitedLandmarks={teamData?.visitedLandmarks ?? {}}
               teammateLocations={teammateLocations}
