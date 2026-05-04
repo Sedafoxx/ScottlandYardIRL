@@ -252,14 +252,19 @@ export default function FugitivePage() {
         {transportType !== 'foot' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <label style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', flexShrink: 0 }}>Stops:</label>
-            <input
-              type="number"
-              min="1"
-              max="20"
-              value={transportStops}
-              onChange={e => setTransportStops(Math.max(1, parseInt(e.target.value, 10) || 1))}
-              style={{ width: '5rem' }}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button
+                className="btn btn-outline"
+                style={{ width: '2.25rem', height: '2.25rem', padding: 0, fontSize: '1.1rem', lineHeight: 1 }}
+                onClick={() => setTransportStops(s => Math.max(1, s - 1))}
+              >−</button>
+              <span style={{ minWidth: '1.5rem', textAlign: 'center', fontWeight: 700, fontSize: '1rem' }}>{transportStops}</span>
+              <button
+                className="btn btn-outline"
+                style={{ width: '2.25rem', height: '2.25rem', padding: 0, fontSize: '1.1rem', lineHeight: 1 }}
+                onClick={() => setTransportStops(s => Math.min(20, s + 1))}
+              >+</button>
+            </div>
           </div>
         )}
         <button

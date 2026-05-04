@@ -568,13 +568,19 @@ export default function AdminPage() {
                   {fugAdminTransportType !== 'foot' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <label style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>Stops:</label>
-                      <input
-                        type="number"
-                        min="1" max="20"
-                        value={fugAdminTransportStops}
-                        onChange={e => setFugAdminTransportStops(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                        style={{ width: '4rem' }}
-                      />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <button
+                          className="btn btn-outline"
+                          style={{ width: '2.25rem', height: '2.25rem', padding: 0, fontSize: '1.1rem', lineHeight: 1 }}
+                          onClick={() => setFugAdminTransportStops(s => Math.max(1, s - 1))}
+                        >−</button>
+                        <span style={{ minWidth: '1.5rem', textAlign: 'center', fontWeight: 700, fontSize: '1rem' }}>{fugAdminTransportStops}</span>
+                        <button
+                          className="btn btn-outline"
+                          style={{ width: '2.25rem', height: '2.25rem', padding: 0, fontSize: '1.1rem', lineHeight: 1 }}
+                          onClick={() => setFugAdminTransportStops(s => Math.min(20, s + 1))}
+                        >+</button>
+                      </div>
                     </div>
                   )}
                   <button
