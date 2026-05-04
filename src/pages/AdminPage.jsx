@@ -62,6 +62,7 @@ export default function AdminPage() {
   const [fugAdminTransportType, setFugAdminTransportType] = useState('ubahn');
   const [fugAdminTransportStops, setFugAdminTransportStops] = useState(1);
   const [fugAdminAnnouncing, setFugAdminAnnouncing] = useState(false);
+  const [now, setNow] = useState(Date.now());
   const fugAdminWatchRef = useRef(null);
   const activeGameRef = useRef(null);
 
@@ -71,6 +72,11 @@ export default function AdminPage() {
 
   // Keep chatTargetRef in sync for use inside Firebase listeners
   useEffect(() => { chatTargetRef.current = chatTarget; }, [chatTarget]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Reset fugitive mode when game changes
   useEffect(() => {
@@ -394,6 +400,16 @@ export default function AdminPage() {
     });
   };
 
+  const goAdminUndercover = async () => {
+    const t = Date.now();
+    await set(ref(db, `games/${activeGameCode}/fugitive/undercover`), { usedAt: t, until: t + 60_000 });
+    await push(ref(db, `games/${activeGameCode}/messages/global`), {
+      text: '🕶️ Mister X went undercover! Location hidden for 1 minute.',
+      sender: 'System',
+      timestamp: t,
+    });
+  };
+
   const announceAdminTransport = async () => {
     setFugAdminAnnouncing(true);
     const t = TRANSPORT_MAP[fugAdminTransportType];
@@ -536,14 +552,36 @@ export default function AdminPage() {
                 )}
 
                 {(() => {
-                  const uc = activeGame?.fugitive?.undercover;
-                  const ucActive = (uc?.until ?? 0) > Date.now();
-                  if (ucActive) return (
-                    <p style={{ fontSize: '0.875rem', fontWeight: 700, color: '#aaa' }}>
-                      🕶️ Undercover active — GPS hidden from teams
-                    </p>
+                  const uc = activeGame?.fugitive?.undercover ?? null;
+                  const isUC = (uc?.until ?? 0) > now;
+                  const onCD = !isUC && (uc?.usedAt ?? 0) + 600_000 > now;
+                  const ucRem = Math.ceil(((uc?.until ?? 0) - now) / 1000);
+                  const cdRem = Math.ceil(((uc?.usedAt ?? 0) + 600_000 - now) / 1000);
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {isUC && (
+                        <p style={{ fontSize: '0.875rem', fontWeight: 700, color: '#aaa' }}>
+                          🕶️ Hidden — reveals in {ucRem}s
+                        </p>
+                      )}
+                      <button
+                        className="btn"
+                        style={{
+                          background: isUC || onCD ? 'var(--color-surface)' : 'var(--color-fugitive)',
+                          color: isUC || onCD ? 'var(--color-text-muted)' : '#fff',
+                          borderColor: isUC || onCD ? 'var(--color-border)' : 'var(--color-fugitive)',
+                        }}
+                        onClick={goAdminUndercover}
+                        disabled={isUC || onCD}
+                      >
+                        {isUC
+                          ? `🕶️ Undercover (${ucRem}s)`
+                          : onCD
+                            ? `⏳ Cooldown — ${Math.floor(cdRem / 60)}:${String(cdRem % 60).padStart(2, '0')}`
+                            : '🕶️ Go Undercover'}
+                      </button>
+                    </div>
                   );
-                  return null;
                 })()}
 
                 {fugAdminGpsError ? (
