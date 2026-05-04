@@ -1,6 +1,19 @@
-import { MapContainer, TileLayer, Circle, Marker, Popup } from 'react-leaflet';
+import { useEffect } from 'react';
+import { MapContainer, TileLayer, Circle, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { LANDMARKS } from '../../data/landmarks';
+
+function MapViewController({ currentHint, teamLocation }) {
+  const map = useMap();
+  useEffect(() => {
+    if (currentHint) {
+      map.setView([currentHint.lat, currentHint.lng], 15);
+    } else if (teamLocation) {
+      map.setView([teamLocation.lat, teamLocation.lng], 16);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
 
 // Fix default marker icons broken by Vite
 delete L.Icon.Default.prototype._getIconUrl;
@@ -78,6 +91,7 @@ export default function GameMap({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
+      <MapViewController currentHint={currentHint} teamLocation={teamLocation} />
 
       {/* Team view: shrinking zone circle */}
       {currentHint && !isAdmin && (

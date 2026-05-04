@@ -317,6 +317,8 @@ export default function TeamPage() {
       const teamSnap = await get(teamRef);
       if (!teamSnap.exists()) {
         set(teamRef, { score: 0, currentRiddle: 0, bigTeam });
+      } else {
+        update(teamRef, { bigTeam });
       }
     });
 
@@ -388,7 +390,7 @@ export default function TeamPage() {
   const liveFeedActive = (teamData?.liveFeedUntil ?? 0) > Date.now();
   const teammateLocations = game?.teams
     ? Object.entries(game.teams)
-        .filter(([n, d]) => n !== teamName && (d.bigTeam || n) === bigTeam && d.location)
+        .filter(([n, d]) => n !== teamName && (d.bigTeam === bigTeam || n === bigTeam || n.startsWith(bigTeam + ' ')) && d.location)
         .map(([n, d]) => ({ name: n, lat: d.location.lat, lng: d.location.lng, timestamp: d.location.timestamp }))
     : [];
 
