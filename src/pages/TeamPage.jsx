@@ -656,6 +656,13 @@ export default function TeamPage() {
                   ● {teammateLocations.length} teammate{teammateLocations.length !== 1 ? 's' : ''} on map
                 </p>
               )}
+              {/* DEBUG — remove before release */}
+              <p style={{ fontSize: '0.6rem', color: '#aaa', marginTop: '0.2rem', fontFamily: 'monospace' }}>
+                gps:{teamLocation ? '✓' : '✗'}
+                {' '}hint:{currentHint ? `✓(${currentHint.radius}m)` : '✗'}
+                {' '}mates:{teammateLocations.length}
+                {' '}bigTeam:{bigTeam}
+              </p>
             </div>
             <button
               className="btn btn-outline"
