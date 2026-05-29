@@ -5,6 +5,7 @@ import { ref, onValue, set, update, push } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Leaderboard from '../components/Leaderboard';
 import GameMap from '../components/Map/GameMap';
+import WrappedScreen from '../components/WrappedScreen';
 import { generateHint, haversineDistance } from '../utils/hints';
 import { TRANSPORT_TYPES } from '../data/powerUps';
 
@@ -162,42 +163,14 @@ export default function FugitivePage() {
   if (loading) return <div className="page" style={{ justifyContent: 'center', textAlign: 'center' }}>Loading...</div>;
 
   if (game?.status === 'ended') {
-    const winner = game.winner;
-    const groups = {};
-    Object.entries(game.teams ?? {}).forEach(([name, data]) => {
-      const bg = data.bigTeam || name;
-      if (!groups[bg]) groups[bg] = { combined: 0 };
-      groups[bg].combined += data.score ?? 0;
-    });
-    const sortedGroups = Object.entries(groups).sort((a, b) => b[1].combined - a[1].combined);
     return (
-      <div className="page" style={{ gap: '1.25rem' }}>
-        <div style={{ textAlign: 'center', paddingTop: '1rem' }}>
-          <p style={{ fontSize: '3.5rem', marginBottom: '0.25rem' }}>{winner ? '🎯' : '🏁'}</p>
-          <h1 style={{ fontSize: '1.6rem', fontWeight: 900, color: 'var(--color-fugitive)' }}>
-            {winner ? `${winner} caught you!` : 'Game Over — you escaped!'}
-          </h1>
-          <p className="text-muted" style={{ marginTop: '0.25rem' }}>Mister X — well played{winner ? ', you made it interesting.' : '!'}</p>
-        </div>
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <h2 style={{ fontSize: '1rem' }}>Final Standings</h2>
-          {sortedGroups.map(([bgName, group], gi) => (
-            <div key={bgName} style={{
-              borderRadius: 8, padding: '0.5rem 0.75rem',
-              background: 'var(--color-bg)',
-              borderLeft: `3px solid ${gi === 0 ? 'var(--color-accent)' : 'transparent'}`,
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', width: '1.2rem' }}>#{gi + 1}</span>
-                <span style={{ fontWeight: 700 }}>{bgName}</span>
-                {bgName === winner && <span style={{ fontSize: '0.65rem', color: 'var(--color-accent)', fontWeight: 800 }}>CAUGHT IT!</span>}
-              </div>
-              <span style={{ fontWeight: 700 }}>{group.combined} pts</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <WrappedScreen
+        game={game}
+        teamName=""
+        bigTeam=""
+        nickname="Mister X"
+        gameCode={gameCode}
+      />
     );
   }
 

@@ -16,6 +16,7 @@ import DirectionBeacon from '../components/PowerUp/DirectionBeacon';
 import { TRANSPORT_TYPES, POWER_UP_CONFIG } from '../data/powerUps';
 import { LANDMARKS, LANDMARK_TRIGGER_RADIUS } from '../data/landmarks';
 import { STARS, STAR_COLLECTION_RADIUS, STAR_TRADE_COST, STAR_VOTE_DURATION_MS } from '../data/stars';
+import WrappedScreen, { NicknameInput } from '../components/WrappedScreen';
 
 const TRANSPORT_MAP = Object.fromEntries(TRANSPORT_TYPES.map(t => [t.key, t]));
 
@@ -533,71 +534,14 @@ export default function TeamPage() {
   );
 
   if (game?.status === 'ended') {
-    const winner = game.winner;
-    const isWinner = winner && winner === bigTeam;
-    const leaderboardTeams = game?.teams ? Object.entries(game.teams) : [];
-    const groups = {};
-    leaderboardTeams.forEach(([name, data]) => {
-      const bg = data.bigTeam || name;
-      if (!groups[bg]) groups[bg] = { combined: 0, members: [] };
-      groups[bg].combined += data.score ?? 0;
-      groups[bg].members.push([name, data]);
-    });
-    const sortedGroups = Object.entries(groups).sort((a, b) => b[1].combined - a[1].combined);
-    const starsByBigTeam = {};
-    Object.values(game.stars ?? {}).forEach(s => {
-      if (s.claimedBy) starsByBigTeam[s.claimedBy] = (starsByBigTeam[s.claimedBy] ?? 0) + 1;
-    });
     return (
-      <div className="page" style={{ gap: '1.25rem' }}>
-        <div style={{ textAlign: 'center', paddingTop: '1rem' }}>
-          <p style={{ fontSize: '3.5rem', marginBottom: '0.25rem' }}>{isWinner ? '🎯' : winner ? '🏁' : '🏁'}</p>
-          <h1 style={{
-            fontSize: '1.6rem', fontWeight: 900,
-            color: isWinner ? 'var(--color-accent)' : 'var(--color-text)',
-          }}>
-            {isWinner ? 'You caught Mister X!' : winner ? `${winner} caught Mister X!` : 'Game Over!'}
-          </h1>
-          {!isWinner && winner && (
-            <p className="text-muted" style={{ marginTop: '0.25rem' }}>
-              {bigTeam} — better luck next time
-            </p>
-          )}
-        </div>
-
-        {/* Final leaderboard */}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <h2 style={{ fontSize: '1rem' }}>Final Standings</h2>
-          {sortedGroups.map(([bgName, group], gi) => {
-            const isMe = bgName === bigTeam;
-            const starCount = starsByBigTeam[bgName] ?? 0;
-            const trades = game.starTrades?.[bgName] ?? 0;
-            const starsLeft = starCount - trades * 3;
-            return (
-              <div key={bgName} style={{
-                borderRadius: 8, padding: '0.5rem 0.75rem',
-                background: isMe ? 'color-mix(in srgb, var(--color-hunter) 12%, transparent)' : 'var(--color-bg)',
-                borderLeft: `3px solid ${gi === 0 ? 'var(--color-accent)' : isMe ? 'var(--color-hunter)' : 'transparent'}`,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', width: '1.2rem' }}>#{gi + 1}</span>
-                  <span style={{ fontWeight: 700 }}>{bgName}</span>
-                  {bgName === winner && <span style={{ fontSize: '0.65rem', color: 'var(--color-accent)', fontWeight: 800 }}>CAUGHT IT!</span>}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                  {starsLeft > 0 && <span style={{ fontSize: '0.8rem', color: '#f1c40f' }}>{'⭐'.repeat(Math.min(starsLeft, 7))}</span>}
-                  <span style={{ fontWeight: 700 }}>{group.combined} pts</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <p style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-          Screenshot this page to share your results!
-        </p>
-      </div>
+      <WrappedScreen
+        game={game}
+        teamName={teamName}
+        bigTeam={bigTeam}
+        nickname={teamData?.nickname ?? ''}
+        gameCode={gameCode}
+      />
     );
   }
 
@@ -621,6 +565,7 @@ export default function TeamPage() {
         <div>
           <h2 style={{ color: 'var(--color-hunter)' }}>{teamName}</h2>
           <p className="text-muted">Game: {gameCode}</p>
+          <NicknameInput gameCode={gameCode} teamName={teamName} currentNickname={teamData?.nickname ?? ''} />
         </div>
         <div style={{ textAlign: 'right' }}>
           <p style={{ fontWeight: 700, fontSize: '1.25rem' }}>{teamData?.score ?? 0} pts</p>
