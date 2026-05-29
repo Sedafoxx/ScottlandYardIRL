@@ -1,4 +1,4 @@
-export default function Leaderboard({ teams, currentTeam }) {
+export default function Leaderboard({ teams, currentTeam, stars, starTrades }) {
   if (!teams || teams.length === 0) return null;
 
   // Group by bigTeam; fall back to team name for ungrouped entries
@@ -20,6 +20,12 @@ export default function Leaderboard({ teams, currentTeam }) {
         const isMyGroup = group.members.some(([n]) => n === currentTeam);
         const multiMember = group.members.length > 1;
         const sortedMembers = [...group.members].sort((a, b) => (b[1].score ?? 0) - (a[1].score ?? 0));
+
+        const bigTeamStarCount = stars
+          ? Object.values(stars).filter(s => s.claimedBy === bigTeamName).length
+          : 0;
+        const tradesUsed = starTrades?.[bigTeamName] ?? 0;
+        const starsAvailable = bigTeamStarCount - tradesUsed * 3;
 
         return (
           <div key={bigTeamName} style={{ borderRadius: '8px', overflow: 'hidden' }}>
@@ -44,7 +50,15 @@ export default function Leaderboard({ teams, currentTeam }) {
                   <span style={{ fontSize: '0.65rem', color: 'var(--color-success)', fontWeight: 700 }}>CAUGHT!</span>
                 )}
               </div>
-              <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{group.combined} pts</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                {bigTeamStarCount > 0 && (
+                  <span style={{ fontSize: '0.8rem', color: '#f1c40f', fontWeight: 700 }}>
+                    {'⭐'.repeat(Math.min(starsAvailable, 7))}
+                    {tradesUsed > 0 && <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', marginLeft: '0.2rem' }}>({tradesUsed}× traded)</span>}
+                  </span>
+                )}
+                <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{group.combined} pts</span>
+              </div>
             </div>
 
             {/* Individual subteam rows */}

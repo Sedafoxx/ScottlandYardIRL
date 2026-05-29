@@ -51,10 +51,13 @@ export default function StartPage() {
         <h2 style={{ fontSize: '1rem', color: 'var(--color-hunter)' }}>Hunter Team</h2>
         <input
           type="text"
-          placeholder="Team name"
+          placeholder="Big team name (e.g. Red, Blue)"
           value={teamName}
           onChange={(e) => setTeamName(e.target.value)}
         />
+        <p className="text-muted" style={{ fontSize: '0.78rem', lineHeight: 1.4, marginTop: '-0.25rem' }}>
+          This is your team colour / side. All players on the same side use the same name.
+        </p>
         <input
           type="text"
           placeholder="Game code (from admin)"

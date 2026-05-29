@@ -334,7 +334,16 @@ export default function TeamPage() {
       // Register this subteam if first device
       const teamSnap = await get(teamRef);
       if (!teamSnap.exists()) {
-        set(teamRef, { score: 0, currentRiddle: 0, bigTeam });
+        const gameData = snap.val();
+        let startRiddle = 0;
+        if (gameData?.status === 'active') {
+          const teammateRiddles = Object.entries(gameData?.teams ?? {})
+            .filter(([n, d]) => n !== teamName && d.bigTeam === bigTeam)
+            .map(([, d]) => d.currentRiddle ?? 0);
+          if (teammateRiddles.length > 0)
+            startRiddle = Math.floor(teammateRiddles.reduce((a, b) => a + b, 0) / teammateRiddles.length);
+        }
+        set(teamRef, { score: 0, currentRiddle: startRiddle, bigTeam });
       } else {
         update(teamRef, { bigTeam });
       }

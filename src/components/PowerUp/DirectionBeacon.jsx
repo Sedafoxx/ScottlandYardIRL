@@ -73,7 +73,7 @@ export default function DirectionBeacon({ gameCode, until }) {
       </div>
 
       {geoError && (
-        <p className="text-muted" style={{ fontSize: '0.8rem' }}>Enable location access to see direction.</p>
+        <p className="text-muted" style={{ fontSize: '0.8rem' }}>Tap <strong>Enable GPS</strong> at the bottom of the page to see direction.</p>
       )}
 
       {!geoError && !info && (
