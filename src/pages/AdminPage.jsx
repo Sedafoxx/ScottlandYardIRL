@@ -8,6 +8,7 @@ import { PUZZLES, WORDLE_WORDS, POWER_UP_RIDDLES } from '../data/puzzles';
 import { generateHint, DIFFICULTY_CONFIG, STARTING_RADIUS, haversineDistance } from '../utils/hints';
 import { POWER_UP_CONFIG, TRANSPORT_TYPES } from '../data/powerUps';
 import { RIDDLE_COUNT } from '../utils/riddles';
+import { STARS } from '../data/stars';
 import ChatPane from '../components/Chat/ChatPane';
 
 const TRANSPORT_MAP = Object.fromEntries(TRANSPORT_TYPES.map(t => [t.key, t]));
@@ -54,6 +55,8 @@ export default function AdminPage() {
   const [powerUpChallengeType, setPowerUpChallengeType] = useState('riddle');
   const [powerUpChallengeDiff, setPowerUpChallengeDiff] = useState('medium');
   const [launchingPowerUp, setLaunchingPowerUp] = useState(false);
+  const [endGamePickerOpen, setEndGamePickerOpen] = useState(false);
+  const [endGameWinnerPick, setEndGameWinnerPick] = useState('');
 
   // Inline Mister X controls
   const [iAmFugitive, setIAmFugitive] = useState(false);
@@ -231,7 +234,18 @@ export default function AdminPage() {
   };
 
   const startGame = () => update(ref(db, `games/${activeGameCode}`), { status: 'active' });
-  const endGame = () => update(ref(db, `games/${activeGameCode}`), { status: 'ended' });
+  const endGame = async (winner) => {
+    await update(ref(db, `games/${activeGameCode}`), { status: 'ended', winner: winner || null, endedAt: Date.now() });
+    await push(ref(db, `games/${activeGameCode}/messages/global`), {
+      text: winner
+        ? `🎯 Game over! ${winner} caught Mister X! Congratulations!`
+        : '🏁 Game over! Admin ended the game.',
+      sender: 'System',
+      timestamp: Date.now(),
+    });
+    setEndGamePickerOpen(false);
+    setEndGameWinnerPick('');
+  };
   const deleteGame = async () => {
     if (!window.confirm(`Delete game ${activeGameCode}? This cannot be undone.`)) return;
     await remove(ref(db, `games/${activeGameCode}`));
@@ -391,11 +405,19 @@ export default function AdminPage() {
     await set(ref(db, `games/${activeGameCode}/powerUp`), { status: 'idle' });
   };
 
+  const releaseStarClue = async (index) => {
+    const existing = activeGame?.stars?.[index] ?? {};
+    if (existing.released) return;
+    await update(ref(db, `games/${activeGameCode}/stars/${index}`), { ...existing, released: true, releasedAt: Date.now() });
+    await push(ref(db, `games/${activeGameCode}/messages/global`), {
+      text: `⭐ Star clue #${index + 1} released!`,
+      sender: 'System',
+      timestamp: Date.now(),
+    });
+  };
+
   const awardCatch = async (teamName) => {
-    const snap = await get(ref(db, `games/${activeGameCode}/teams/${teamName}`));
-    const current = snap.val()?.score ?? 0;
     await update(ref(db, `games/${activeGameCode}/teams/${teamName}`), {
-      score: current + 100,
       caughtFugitive: true,
     });
   };
@@ -486,13 +508,8 @@ export default function AdminPage() {
                 {activeGame.status === 'waiting' && (
                   <button className="btn btn-success" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={startGame}>Start</button>
                 )}
-                {activeGame.status === 'active' && (
-                  <button className="btn btn-primary" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={endGame}>End Game</button>
-                )}
-                {activeGame.status === 'active' && (
-                  <button className="btn btn-outline" style={{ width: 'auto', padding: '0.5rem 1rem', color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }} onClick={refreshZoneHints}>
-                    Refresh Zones
-                  </button>
+                {activeGame.status === 'active' && !endGamePickerOpen && (
+                  <button className="btn btn-primary" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={() => setEndGamePickerOpen(true)}>End Game</button>
                 )}
                 {activeGame.status === 'ended' && (
                   <button className="btn btn-accent" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={downloadResults} disabled={exporting}>
@@ -504,6 +521,32 @@ export default function AdminPage() {
                 </button>
               </div>
             </div>
+            {endGamePickerOpen && (() => {
+              const bigTeams = [...new Set(
+                Object.values(activeGame.teams ?? {}).map(d => d.bigTeam || '').filter(Boolean)
+              )].sort();
+              return (
+                <div style={{ background: 'var(--color-surface)', borderRadius: 8, padding: '0.75rem', border: '1px solid var(--color-primary)44', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <p style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--color-primary)' }}>End game — who caught Mister X?</p>
+                  <select
+                    value={endGameWinnerPick}
+                    onChange={e => setEndGameWinnerPick(e.target.value)}
+                    style={{ width: '100%', padding: '0.5rem', borderRadius: 6, background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+                  >
+                    <option value="">Nobody caught (time's up)</option>
+                    {bigTeams.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="btn btn-primary" style={{ flex: 1, padding: '0.5rem' }} onClick={() => endGame(endGameWinnerPick)}>
+                      Confirm End
+                    </button>
+                    <button className="btn btn-outline" style={{ flex: 1, padding: '0.5rem' }} onClick={() => { setEndGamePickerOpen(false); setEndGameWinnerPick(''); }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               <p style={{ fontSize: '0.875rem', color: 'var(--color-hunter)' }}>
                 Teams: <strong>{activeGameCode}</strong>
@@ -743,6 +786,72 @@ export default function AdminPage() {
             </div>
           )}
 
+          {/* Stars */}
+          {activeGame.status === 'active' && (() => {
+            const starsData = activeGame.stars ?? {};
+            const allBigTeams = [...new Set(teams.map(([, d]) => d.bigTeam).filter(Boolean))];
+            return (
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <h2 style={{ fontSize: '1rem', color: '#f1c40f' }}>⭐ Stars</h2>
+
+                {/* Big-team totals */}
+                {allBigTeams.length > 0 && (
+                  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                    {allBigTeams.map(bt => {
+                      const claimed = Object.values(starsData).filter(s => s.claimedBy === bt).length;
+                      const trades = activeGame.starTrades?.[bt] ?? 0;
+                      const available = claimed - trades * 3;
+                      return (
+                        <div key={bt} style={{ fontSize: '0.85rem' }}>
+                          <span style={{ fontWeight: 700 }}>{bt}:</span>{' '}
+                          <span style={{ color: '#f1c40f' }}>{'⭐'.repeat(Math.max(0, available))}</span>
+                          {claimed === 0 && <span style={{ color: 'var(--color-text-muted)' }}>no stars yet</span>}
+                          {trades > 0 && <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}> ({trades}× traded)</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Per-star rows */}
+                {STARS.map((star, i) => {
+                  const sd = starsData[i] ?? {};
+                  return (
+                    <div key={i} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '0.5rem 0.75rem', background: 'var(--color-bg)', borderRadius: 8,
+                      borderLeft: `3px solid ${sd.released ? (sd.claimedBy ? '#f1c40f' : 'var(--color-accent)') : 'var(--color-border)'}`,
+                    }}>
+                      <div>
+                        <p style={{ fontWeight: 700, fontSize: '0.85rem' }}>#{i + 1} {star.station}</p>
+                        <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                          {star.clue.type === 'image' ? '🖼️ Image clue' : `"${star.clue.text.slice(0, 40)}…"`}
+                        </p>
+                        {sd.claimedBy && (
+                          <p style={{ fontSize: '0.7rem', color: '#f1c40f', marginTop: 2 }}>
+                            ⭐ Claimed by {sd.claimedBy} ({sd.claimedTeam})
+                          </p>
+                        )}
+                        {sd.released && !sd.claimedBy && (
+                          <p style={{ fontSize: '0.7rem', color: 'var(--color-accent)', marginTop: 2 }}>Released — unclaimed</p>
+                        )}
+                      </div>
+                      {!sd.released && (
+                        <button
+                          className="btn btn-outline"
+                          style={{ width: 'auto', padding: '0.3rem 0.75rem', fontSize: '0.8rem', color: '#f1c40f', borderColor: '#f1c40f', flexShrink: 0 }}
+                          onClick={() => releaseStarClue(i)}
+                        >
+                          Release
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           {/* Pending photo submissions */}
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -923,7 +1032,7 @@ export default function AdminPage() {
                                 style={{ width: 'auto', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
                                 onClick={() => awardCatch(name)}
                               >
-                                +100 Caught!
+                                Caught!
                               </button>
                             )}
                           </div>

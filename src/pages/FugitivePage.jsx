@@ -4,6 +4,7 @@ import { db, storage } from '../firebase/config';
 import { ref, onValue, set, update, push } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Leaderboard from '../components/Leaderboard';
+import GameMap from '../components/Map/GameMap';
 import { generateHint, haversineDistance } from '../utils/hints';
 import { TRANSPORT_TYPES } from '../data/powerUps';
 
@@ -21,6 +22,7 @@ export default function FugitivePage() {
   const [announcing, setAnnouncing] = useState(false);
   const [selfieUploading, setSelfieUploading] = useState(false);
   const [selfieError, setSelfieError] = useState('');
+  const [showMap, setShowMap] = useState(false);
   const [now, setNow] = useState(Date.now());
   const gameDataRef = useRef(null);
   const selfieInputRef = useRef();
@@ -151,7 +153,53 @@ export default function FugitivePage() {
   const selfieRequest = game?.selfieRequest;
   const selfieNeeded = selfieRequest?.status === 'pending';
 
+  const allTeamLocations = game?.teams
+    ? Object.entries(game.teams)
+        .filter(([, d]) => d.location)
+        .map(([name, d]) => ({ name, bigTeam: d.bigTeam || name, lat: d.location.lat, lng: d.location.lng, timestamp: d.location.timestamp }))
+    : [];
+
   if (loading) return <div className="page" style={{ justifyContent: 'center', textAlign: 'center' }}>Loading...</div>;
+
+  if (game?.status === 'ended') {
+    const winner = game.winner;
+    const groups = {};
+    Object.entries(game.teams ?? {}).forEach(([name, data]) => {
+      const bg = data.bigTeam || name;
+      if (!groups[bg]) groups[bg] = { combined: 0 };
+      groups[bg].combined += data.score ?? 0;
+    });
+    const sortedGroups = Object.entries(groups).sort((a, b) => b[1].combined - a[1].combined);
+    return (
+      <div className="page" style={{ gap: '1.25rem' }}>
+        <div style={{ textAlign: 'center', paddingTop: '1rem' }}>
+          <p style={{ fontSize: '3.5rem', marginBottom: '0.25rem' }}>{winner ? '🎯' : '🏁'}</p>
+          <h1 style={{ fontSize: '1.6rem', fontWeight: 900, color: 'var(--color-fugitive)' }}>
+            {winner ? `${winner} caught you!` : 'Game Over — you escaped!'}
+          </h1>
+          <p className="text-muted" style={{ marginTop: '0.25rem' }}>Mister X — well played{winner ? ', you made it interesting.' : '!'}</p>
+        </div>
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <h2 style={{ fontSize: '1rem' }}>Final Standings</h2>
+          {sortedGroups.map(([bgName, group], gi) => (
+            <div key={bgName} style={{
+              borderRadius: 8, padding: '0.5rem 0.75rem',
+              background: 'var(--color-bg)',
+              borderLeft: `3px solid ${gi === 0 ? 'var(--color-accent)' : 'transparent'}`,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', width: '1.2rem' }}>#{gi + 1}</span>
+                <span style={{ fontWeight: 700 }}>{bgName}</span>
+                {bgName === winner && <span style={{ fontSize: '0.65rem', color: 'var(--color-accent)', fontWeight: 800 }}>CAUGHT IT!</span>}
+              </div>
+              <span style={{ fontWeight: 700 }}>{group.combined} pts</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page" style={{ gap: '1.5rem' }}>
@@ -333,9 +381,50 @@ export default function FugitivePage() {
         <Leaderboard teams={Object.entries(game.teams)} />
       )}
 
+      <button className="btn btn-outline" onClick={() => setShowMap(true)}>
+        🗺️ Open Map — See Teams
+      </button>
+
       <button className="btn btn-outline" onClick={() => navigate('/')}>
         Leave Game
       </button>
+
+      {showMap && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 600, display: 'flex', flexDirection: 'column', background: '#000' }}>
+          <div style={{
+            padding: '0.75rem 1rem',
+            background: 'var(--color-surface)',
+            borderBottom: '1px solid var(--color-border)',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            flexShrink: 0,
+          }}>
+            <div>
+              <p style={{ fontWeight: 700, color: 'var(--color-fugitive)' }}>Mister X — Team Overview</p>
+              <p className="text-muted" style={{ fontSize: '0.75rem' }}>
+                {isUndercover ? '🕶️ You are undercover — teams cannot see you' : 'Your location is visible to teams with zone hints'}
+              </p>
+              {allTeamLocations.length > 0 && (
+                <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.1rem' }}>
+                  ● {allTeamLocations.length} team member{allTeamLocations.length !== 1 ? 's' : ''} visible
+                </p>
+              )}
+            </div>
+            <button
+              className="btn btn-outline"
+              style={{ width: 'auto', padding: '0.5rem 1rem', fontSize: '0.875rem' }}
+              onClick={() => setShowMap(false)}
+            >
+              Back
+            </button>
+          </div>
+          <div style={{ flex: 1 }}>
+            <GameMap
+              teamLocation={lastPos}
+              allTeamLocations={isUndercover ? allTeamLocations : []}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import heic2any from 'heic2any';
 import { db, storage } from '../firebase/config';
-import { ref, onValue, set, get, update, remove, runTransaction } from 'firebase/database';
+import { ref, onValue, set, get, update, remove, runTransaction, push } from 'firebase/database';
 import { buildRiddles } from '../utils/riddles';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import RiddleCard from '../components/Riddle/RiddleCard';
@@ -15,6 +15,7 @@ import LiveFeedCard from '../components/PowerUp/LiveFeedCard';
 import DirectionBeacon from '../components/PowerUp/DirectionBeacon';
 import { TRANSPORT_TYPES, POWER_UP_CONFIG } from '../data/powerUps';
 import { LANDMARKS, LANDMARK_TRIGGER_RADIUS } from '../data/landmarks';
+import { STARS, STAR_COLLECTION_RADIUS, STAR_TRADE_COST, STAR_VOTE_DURATION_MS } from '../data/stars';
 
 const TRANSPORT_MAP = Object.fromEntries(TRANSPORT_TYPES.map(t => [t.key, t]));
 
@@ -300,6 +301,22 @@ export default function TeamPage() {
   const gpsWatchRef = useRef(null);
   const teamDataRef = useRef(null);
 
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+
+  // Star mechanic state
+  const [stars, setStars] = useState({});
+  const [starTrades, setStarTrades] = useState({});
+  const [starVote, setStarVote] = useState(null);
+  const [starClaimedPopup, setStarClaimedPopup] = useState(null);
+  const [starCluesOpen, setStarCluesOpen] = useState(false);
+  const [votingLoading, setVotingLoading] = useState(false);
+  const starsRef = useRef({});
+  const claimedAttemptsRef = useRef(new Set());
+  const prevStarsRef = useRef({});
+  const popupTimerRef = useRef(null);
+  const voteTimerRef = useRef(null);
+
   useEffect(() => {
     const gameRef = ref(db, `games/${gameCode}`);
     const teamRef = ref(db, `games/${gameCode}/teams/${teamName}`);
@@ -338,6 +355,139 @@ export default function TeamPage() {
 
     return () => { unsub(); teamUnsub(); };
   }, [gameCode, teamName]);
+
+  // Star listeners
+  useEffect(() => {
+    const unsub = onValue(ref(db, `games/${gameCode}/stars`), (snap) => {
+      const val = snap.val() ?? {};
+      setStars(val);
+      starsRef.current = val;
+    });
+    return () => unsub();
+  }, [gameCode]);
+
+  useEffect(() => {
+    const unsub = onValue(ref(db, `games/${gameCode}/starTrades`), (snap) => {
+      setStarTrades(snap.val() ?? {});
+    });
+    return () => unsub();
+  }, [gameCode]);
+
+  useEffect(() => {
+    const unsub = onValue(ref(db, `games/${gameCode}/starVotes/${bigTeam}`), (snap) => {
+      setStarVote(snap.val());
+    });
+    return () => unsub();
+  }, [gameCode, bigTeam]);
+
+  // Detect newly claimed stars → popup
+  useEffect(() => {
+    Object.entries(stars).forEach(([idx, star]) => {
+      if (star.claimedBy && !prevStarsRef.current[idx]?.claimedBy) {
+        if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
+        setStarClaimedPopup({ starIndex: parseInt(idx), claimedBy: star.claimedBy, claimedTeam: star.claimedTeam });
+        popupTimerRef.current = setTimeout(() => setStarClaimedPopup(null), 5000);
+      }
+    });
+    prevStarsRef.current = stars;
+  }, [stars]);
+
+  // Vote timer auto-resolve
+  useEffect(() => {
+    if (!starVote?.active) {
+      if (voteTimerRef.current) clearTimeout(voteTimerRef.current);
+      return;
+    }
+    const remaining = (starVote.startedAt + STAR_VOTE_DURATION_MS) - Date.now();
+    if (remaining <= 0) { resolveVote(); return; }
+    voteTimerRef.current = setTimeout(resolveVote, remaining);
+    return () => { if (voteTimerRef.current) clearTimeout(voteTimerRef.current); };
+  }, [starVote?.active, starVote?.startedAt]); // eslint-disable-line
+
+  // Star GPS proximity check
+  useEffect(() => {
+    if (!teamLocation || !gpsEnabled) return;
+    const { lat, lng } = teamLocation;
+    STARS.forEach((star, i) => {
+      const sd = starsRef.current[i];
+      if (!sd?.released || sd?.claimedBy) return;
+      if (claimedAttemptsRef.current.has(i)) return;
+      if (haversineDistance(lat, lng, star.lat, star.lng) <= (star.radius ?? STAR_COLLECTION_RADIUS)) {
+        claimedAttemptsRef.current.add(i);
+        claimStar(i);
+      }
+    });
+  }, [teamLocation]); // eslint-disable-line
+
+  const claimStar = async (starIndex) => {
+    const starRef = ref(db, `games/${gameCode}/stars/${starIndex}`);
+    let claimed = false;
+    await runTransaction(starRef, (current) => {
+      if (!current?.released || current?.claimedBy) return;
+      claimed = true;
+      return { ...current, claimedBy: bigTeam, claimedTeam: teamName, claimedAt: Date.now() };
+    });
+    if (claimed) {
+      await push(ref(db, `games/${gameCode}/messages/global`), {
+        text: `⭐ ${teamName} (${bigTeam}) claimed Star #${starIndex + 1}!`,
+        sender: 'System',
+        timestamp: Date.now(),
+      });
+    }
+  };
+
+  const startVote = async () => {
+    setVotingLoading(true);
+    await set(ref(db, `games/${gameCode}/starVotes/${bigTeam}`), {
+      active: true,
+      startedAt: Date.now(),
+      votes: {},
+    });
+    setVotingLoading(false);
+  };
+
+  const castVote = async (yes) => {
+    setVotingLoading(true);
+    await update(ref(db, `games/${gameCode}/starVotes/${bigTeam}/votes`), { [teamName]: yes });
+    setVotingLoading(false);
+  };
+
+  const resolveVote = async () => {
+    const voteRef = ref(db, `games/${gameCode}/starVotes/${bigTeam}`);
+    let passed = false;
+    await runTransaction(voteRef, (current) => {
+      if (!current?.active) return;
+      const voteValues = Object.values(current.votes ?? {});
+      const yes = voteValues.filter(v => v === true).length;
+      const no = voteValues.filter(v => v === false).length;
+      passed = yes > no && yes > 0;
+      return { ...current, active: false, result: passed ? 'accepted' : 'rejected' };
+    });
+    if (passed) {
+      await runTransaction(ref(db, `games/${gameCode}/starTrades/${bigTeam}`), (c) => (c ?? 0) + 1);
+      const snap = await get(ref(db, `games/${gameCode}/teams`));
+      const allTeams = snap.val() ?? {};
+      // Adaptive duration: 5–10 min based on avg zone radius of this big team.
+      // Smaller radius = already close = shorter beacon. Larger = lost = longer.
+      const bigTeamEntries = Object.values(allTeams).filter(d => (d.bigTeam || '') === bigTeam || false);
+      const avgRadius = bigTeamEntries.length > 0
+        ? bigTeamEntries.reduce((s, d) => s + (d.currentHint?.radius ?? 2000), 0) / bigTeamEntries.length
+        : 2000;
+      const beaconMs = Math.round((5 + 5 * Math.min(1, avgRadius / 2000)) * 60 * 1000);
+      const until = Date.now() + beaconMs;
+      const beaconMinutes = Math.round(beaconMs / 60000);
+      const updates = {};
+      Object.entries(allTeams).forEach(([tName, tData]) => {
+        if ((tData.bigTeam || tName) === bigTeam) updates[`${tName}/directionBeaconUntil`] = until;
+      });
+      if (Object.keys(updates).length > 0) await update(ref(db, `games/${gameCode}/teams`), updates);
+      await push(ref(db, `games/${gameCode}/messages/global`), {
+        text: `⭐➡️🧭 ${bigTeam} traded 3 stars for a Direction Beacon (${beaconMinutes} min)!`,
+        sender: 'System',
+        timestamp: Date.now(),
+      });
+    }
+  };
 
   const toggleGPS = () => {
     if (gpsEnabled) {
@@ -382,6 +532,75 @@ export default function TeamPage() {
     </div>
   );
 
+  if (game?.status === 'ended') {
+    const winner = game.winner;
+    const isWinner = winner && winner === bigTeam;
+    const leaderboardTeams = game?.teams ? Object.entries(game.teams) : [];
+    const groups = {};
+    leaderboardTeams.forEach(([name, data]) => {
+      const bg = data.bigTeam || name;
+      if (!groups[bg]) groups[bg] = { combined: 0, members: [] };
+      groups[bg].combined += data.score ?? 0;
+      groups[bg].members.push([name, data]);
+    });
+    const sortedGroups = Object.entries(groups).sort((a, b) => b[1].combined - a[1].combined);
+    const starsByBigTeam = {};
+    Object.values(game.stars ?? {}).forEach(s => {
+      if (s.claimedBy) starsByBigTeam[s.claimedBy] = (starsByBigTeam[s.claimedBy] ?? 0) + 1;
+    });
+    return (
+      <div className="page" style={{ gap: '1.25rem' }}>
+        <div style={{ textAlign: 'center', paddingTop: '1rem' }}>
+          <p style={{ fontSize: '3.5rem', marginBottom: '0.25rem' }}>{isWinner ? '🎯' : winner ? '🏁' : '🏁'}</p>
+          <h1 style={{
+            fontSize: '1.6rem', fontWeight: 900,
+            color: isWinner ? 'var(--color-accent)' : 'var(--color-text)',
+          }}>
+            {isWinner ? 'You caught Mister X!' : winner ? `${winner} caught Mister X!` : 'Game Over!'}
+          </h1>
+          {!isWinner && winner && (
+            <p className="text-muted" style={{ marginTop: '0.25rem' }}>
+              {bigTeam} — better luck next time
+            </p>
+          )}
+        </div>
+
+        {/* Final leaderboard */}
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <h2 style={{ fontSize: '1rem' }}>Final Standings</h2>
+          {sortedGroups.map(([bgName, group], gi) => {
+            const isMe = bgName === bigTeam;
+            const starCount = starsByBigTeam[bgName] ?? 0;
+            const trades = game.starTrades?.[bgName] ?? 0;
+            const starsLeft = starCount - trades * 3;
+            return (
+              <div key={bgName} style={{
+                borderRadius: 8, padding: '0.5rem 0.75rem',
+                background: isMe ? 'color-mix(in srgb, var(--color-hunter) 12%, transparent)' : 'var(--color-bg)',
+                borderLeft: `3px solid ${gi === 0 ? 'var(--color-accent)' : isMe ? 'var(--color-hunter)' : 'transparent'}`,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', width: '1.2rem' }}>#{gi + 1}</span>
+                  <span style={{ fontWeight: 700 }}>{bgName}</span>
+                  {bgName === winner && <span style={{ fontSize: '0.65rem', color: 'var(--color-accent)', fontWeight: 800 }}>CAUGHT IT!</span>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  {starsLeft > 0 && <span style={{ fontSize: '0.8rem', color: '#f1c40f' }}>{'⭐'.repeat(Math.min(starsLeft, 7))}</span>}
+                  <span style={{ fontWeight: 700 }}>{group.combined} pts</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <p style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+          Screenshot this page to share your results!
+        </p>
+      </div>
+    );
+  }
+
   const riddles = game?.riddleSets?.[subteamKey] ? Object.values(game.riddleSets[subteamKey]) : [];
   const currentRiddleIndex = teamData?.currentRiddle ?? 0;
   const currentRiddle = riddles[currentRiddleIndex];
@@ -389,10 +608,10 @@ export default function TeamPage() {
   const leaderboardTeams = game?.teams ? Object.entries(game.teams) : [];
   const liveFeedActive = (teamData?.liveFeedUntil ?? 0) > Date.now();
   const fugitiveUndercover = (game?.fugitive?.undercover?.until ?? 0) > Date.now();
-  const teammateLocations = game?.teams
+  const allTeamLocations = game?.teams
     ? Object.entries(game.teams)
-        .filter(([n, d]) => n !== teamName && (d.bigTeam === bigTeam || n === bigTeam || n.startsWith(bigTeam + ' ')) && d.location)
-        .map(([n, d]) => ({ name: n, lat: d.location.lat, lng: d.location.lng, timestamp: d.location.timestamp }))
+        .filter(([n, d]) => n !== teamName && d.location && (d.bigTeam === bigTeam || n === bigTeam || n.startsWith(bigTeam + ' ')))
+        .map(([n, d]) => ({ name: n, bigTeam: d.bigTeam || n, lat: d.location.lat, lng: d.location.lng, timestamp: d.location.timestamp }))
     : [];
 
   return (
@@ -423,7 +642,7 @@ export default function TeamPage() {
         {rulesOpen && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.82rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
             <p><strong style={{ color: 'var(--color-hunter)' }}>Goal:</strong> Find and catch Mister X.</p>
-            <p><strong style={{ color: 'var(--color-accent)' }}>Catch Mister X:</strong> +100 pts — tell the Game Master when you have them.</p>
+            <p><strong style={{ color: 'var(--color-accent)' }}>Catch Mister X:</strong> wins the game for your team — tell the Game Master when you have them. Points are just for tracking progress.</p>
             <p><strong style={{ color: 'var(--color-success)' }}>Easy challenge:</strong> −5% zone radius · +10 pts</p>
             <p><strong style={{ color: 'var(--color-accent)' }}>Medium challenge:</strong> −10% zone radius · +20 pts</p>
             <p><strong style={{ color: 'var(--color-primary)' }}>Hard challenge:</strong> −15% zone radius · +30 pts</p>
@@ -432,6 +651,7 @@ export default function TeamPage() {
             <p><strong>Power-ups:</strong> solve competitive mini-challenges for special abilities.</p>
             <p><strong>Landmarks:</strong> stand within 15m of a Vienna landmark · answer the riddle · +30 pts + power-up reward.</p>
             <p><strong>Enable GPS</strong> to see yourself on the map and unlock landmark bonuses.</p>
+            <p><strong style={{ color: '#f1c40f' }}>⭐ Stars:</strong> Mister X releases clues pointing to hidden stars around Vienna. Walk within ~20m of the star location to collect it automatically. Your whole team competes against the other team for each star. Collect 3 stars to vote on trading them for a Direction Beacon — a 2-minute compass pointing at Mister X.</p>
           </div>
         )}
       </div>
@@ -461,6 +681,131 @@ export default function TeamPage() {
           <p className="text-muted" style={{ marginTop: '0.5rem' }}>Now find Mister X!</p>
         </div>
       )}
+
+      {/* Star clue section */}
+      {(() => {
+        const releasedStars = STARS.filter((_, i) => stars[i]?.released);
+        if (releasedStars.length === 0) return null;
+        const myStarCount = Object.values(stars).filter(s => s.claimedBy === bigTeam).length;
+        const tradesUsed = starTrades[bigTeam] ?? 0;
+        const starsAvailable = myStarCount - tradesUsed * 3;
+        const canTrade = starsAvailable >= STAR_TRADE_COST && tradesUsed === 0;
+        // Compute expected beacon duration for display (same formula as resolveVote)
+        const bigTeamMembers = Object.values(game?.teams ?? {}).filter(d => (d.bigTeam || '') === bigTeam);
+        const avgRadius = bigTeamMembers.length > 0
+          ? bigTeamMembers.reduce((s, d) => s + (d.currentHint?.radius ?? 2000), 0) / bigTeamMembers.length
+          : 2000;
+        const expectedBeaconMin = Math.round((5 + 5 * Math.min(1, avgRadius / 2000)));
+        const voteActive = starVote?.active && (now - (starVote?.startedAt ?? 0)) < STAR_VOTE_DURATION_MS;
+        const myVote = starVote?.votes?.[teamName];
+        const voteTimeLeft = voteActive
+          ? Math.max(0, Math.ceil(((starVote.startedAt + STAR_VOTE_DURATION_MS) - now) / 1000))
+          : 0;
+        const newClues = releasedStars.filter((_, ri) => {
+          const idx = STARS.indexOf(releasedStars[ri]);
+          return !stars[idx]?.claimedBy;
+        }).length;
+
+        return (
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <button
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--color-text)', width: '100%' }}
+              onClick={() => setStarCluesOpen(o => !o)}
+            >
+              <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                ⭐ Star Clues
+                {releasedStars.length > 0 && (
+                  <span style={{ marginLeft: '0.4rem', fontSize: '0.75rem', color: '#f1c40f' }}>
+                    {myStarCount} collected · {starsAvailable} to trade
+                  </span>
+                )}
+              </span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{starCluesOpen ? '▲' : '▼'}</span>
+            </button>
+
+            {starCluesOpen && (
+              <>
+                <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                  Each clue hints at a location in Vienna. Walk within ~20m of the spot — your phone collects the star automatically. First team there wins it.
+                </p>
+                {releasedStars.map((star) => {
+                  const idx = STARS.indexOf(star);
+                  const sd = stars[idx];
+                  return (
+                    <div key={idx} style={{
+                      borderRadius: 8, overflow: 'hidden',
+                      borderLeft: `3px solid ${sd?.claimedBy === bigTeam ? '#f1c40f' : sd?.claimedBy ? 'var(--color-primary)' : 'var(--color-accent)'}`,
+                      background: 'var(--color-bg)',
+                    }}>
+                      <div style={{ padding: '0.6rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-accent)' }}>
+                            Clue #{idx + 1}
+                          </span>
+                          {sd?.claimedBy && (
+                            <span style={{ fontSize: '0.7rem', fontWeight: 700, color: sd.claimedBy === bigTeam ? '#f1c40f' : 'var(--color-primary)' }}>
+                              {sd.claimedBy === bigTeam ? '⭐ Yours' : `❌ ${sd.claimedBy}`}
+                            </span>
+                          )}
+                        </div>
+                        {star.clue.type === 'text' ? (
+                          <p style={{ fontSize: '0.9rem', lineHeight: 1.6, fontStyle: 'italic' }}>„{star.clue.text}"</p>
+                        ) : (
+                          <>
+                            {star.clue.caption && <p style={{ fontSize: '0.85rem', fontStyle: 'italic' }}>„{star.clue.caption}"</p>}
+                            {star.clue.imageUrl
+                              ? <img src={star.clue.imageUrl} alt={`Star clue ${idx + 1}`} style={{ width: '100%', borderRadius: 6, maxHeight: 200, objectFit: 'cover' }} />
+                              : <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>[Image coming soon]</p>
+                            }
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Vote / trade section */}
+                {voteActive ? (
+                  <div style={{ background: 'var(--color-surface)', borderRadius: 8, padding: '0.75rem', borderLeft: '4px solid #f1c40f', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <p style={{ fontWeight: 700, color: '#f1c40f' }}>🗳️ Vote in progress — {Math.floor(voteTimeLeft / 60)}:{String(voteTimeLeft % 60).padStart(2, '0')}</p>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Trade 3 stars for a Direction Beacon (whole team, ~{expectedBeaconMin} min)?</p>
+                    {myVote !== undefined ? (
+                      <p style={{ fontSize: '0.85rem', color: myVote ? 'var(--color-success)' : 'var(--color-primary)' }}>
+                        You voted {myVote ? '✅ Yes' : '❌ No'}
+                      </p>
+                    ) : (
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-success" style={{ flex: 1, padding: '0.5rem' }} onClick={() => castVote(true)} disabled={votingLoading}>✅ Yes</button>
+                        <button className="btn btn-primary" style={{ flex: 1, padding: '0.5rem' }} onClick={() => castVote(false)} disabled={votingLoading}>❌ No</button>
+                      </div>
+                    )}
+                    <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                      Votes: {Object.entries(starVote?.votes ?? {}).map(([t, v]) => `${t}: ${v ? '✅' : '❌'}`).join(' · ')}
+                    </p>
+                  </div>
+                ) : canTrade ? (
+                  <button
+                    className="btn btn-outline"
+                    style={{ borderColor: '#f1c40f', color: '#f1c40f', fontSize: '0.85rem' }}
+                    onClick={startVote}
+                    disabled={votingLoading || !!starVote?.active}
+                  >
+                    ⭐⭐⭐ → 🧭 Start vote to trade 3 stars ({expectedBeaconMin} min beacon)
+                  </button>
+                ) : tradesUsed > 0 && starsAvailable < STAR_TRADE_COST ? (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                    Trade used · collect more stars to trade again
+                  </p>
+                ) : starsAvailable < STAR_TRADE_COST && myStarCount > 0 ? (
+                  <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                    {STAR_TRADE_COST - starsAvailable} more star{STAR_TRADE_COST - starsAvailable !== 1 ? 's' : ''} needed to unlock Direction Beacon vote
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Rejected photo retakes */}
       {Object.entries(teamData?.submissions ?? {})
@@ -525,7 +870,7 @@ export default function TeamPage() {
         </div>
       )}
 
-      <Leaderboard teams={leaderboardTeams} currentTeam={teamName} />
+      <Leaderboard teams={leaderboardTeams} currentTeam={teamName} stars={stars} starTrades={starTrades} />
 
       <ChatPane
         gameCode={gameCode}
@@ -633,6 +978,32 @@ export default function TeamPage() {
         teams={Object.keys(game?.teams ?? {})}
       />
 
+      {/* Star claimed popup */}
+      {starClaimedPopup && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 800,
+            background: 'rgba(8, 8, 18, 0.93)',
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: '0.75rem',
+            padding: '2rem',
+          }}
+          onClick={() => setStarClaimedPopup(null)}
+        >
+          <p style={{ fontSize: '4rem' }}>⭐</p>
+          <p style={{ fontSize: '1.4rem', fontWeight: 900, color: '#f1c40f', textAlign: 'center' }}>
+            Star #{starClaimedPopup.starIndex + 1} Claimed!
+          </p>
+          <p style={{ fontSize: '1rem', color: '#fff', textAlign: 'center' }}>
+            {starClaimedPopup.claimedTeam}
+          </p>
+          <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.6)', textAlign: 'center' }}>
+            for {starClaimedPopup.claimedBy}
+          </p>
+          <p style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', marginTop: '0.5rem' }}>Tap to dismiss</p>
+        </div>
+      )}
+
       {/* Inline full-screen map overlay — TeamPage stays mounted so GPS keeps running */}
       {showMap && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 600, display: 'flex', flexDirection: 'column', background: '#000' }}>
@@ -654,16 +1025,16 @@ export default function TeamPage() {
                       ? `Zone hint — ${currentHint.radius}m radius`
                       : 'No hint yet'}
               </p>
-              {teammateLocations.length > 0 && (
-                <p style={{ fontSize: '0.7rem', color: '#2ecc71', marginTop: '0.1rem' }}>
-                  ● {teammateLocations.length} teammate{teammateLocations.length !== 1 ? 's' : ''} on map
+              {allTeamLocations.length > 0 && (
+                <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.1rem' }}>
+                  ● {allTeamLocations.length} player{allTeamLocations.length !== 1 ? 's' : ''} on map
                 </p>
               )}
               {/* DEBUG — remove before release */}
               <p style={{ fontSize: '0.6rem', color: '#aaa', marginTop: '0.2rem', fontFamily: 'monospace' }}>
                 gps:{teamLocation ? '✓' : '✗'}
                 {' '}hint:{currentHint ? `✓(${currentHint.radius}m)` : '✗'}
-                {' '}mates:{teammateLocations.length}
+                {' '}others:{allTeamLocations.length}
                 {' '}bigTeam:{bigTeam}
               </p>
             </div>
@@ -681,7 +1052,8 @@ export default function TeamPage() {
               fugitiveLocation={liveFeedActive && !fugitiveUndercover ? game?.fugitive?.lastUpdate : null}
               teamLocation={teamLocation}
               visitedLandmarks={teamData?.visitedLandmarks ?? {}}
-              teammateLocations={teammateLocations}
+              allTeamLocations={allTeamLocations}
+              myBigTeam={bigTeam}
             />
           </div>
         </div>

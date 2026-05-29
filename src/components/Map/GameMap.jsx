@@ -37,19 +37,21 @@ const exactHintIcon = L.divIcon({
   iconAnchor: [8, 8],
 });
 
-const teamIcon = L.divIcon({
-  html: '<div style="background:#3498db;width:14px;height:14px;border-radius:50%;border:3px solid white;box-shadow:0 0 0 3px #3498dbaa"></div>',
-  className: '',
-  iconSize: [14, 14],
-  iconAnchor: [7, 7],
-});
+function bigTeamColor(bigTeam) {
+  const n = (bigTeam || '').toLowerCase();
+  if (n.includes('blue')) return '#3498db';
+  if (n.includes('red')) return '#e74c3c';
+  return '#2ecc71';
+}
 
-const teammateIcon = L.divIcon({
-  html: '<div style="background:#2ecc71;width:12px;height:12px;border-radius:50%;border:2px solid white;box-shadow:0 0 0 2px #2ecc71aa"></div>',
-  className: '',
-  iconSize: [12, 12],
-  iconAnchor: [6, 6],
-});
+function makeTeamDotIcon(color, size, border) {
+  return L.divIcon({
+    html: `<div style="background:${color};width:${size}px;height:${size}px;border-radius:50%;border:${border}px solid white;box-shadow:0 0 0 ${border}px ${color}88"></div>`,
+    className: '',
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
 
 const VIENNA_CENTER = [48.2082, 16.3738];
 const DEFAULT_ZOOM = 13;
@@ -78,7 +80,8 @@ export default function GameMap({
   teamLocation = null,
   visitedLandmarks = {},
   isAdmin = false,
-  teammateLocations = [],
+  allTeamLocations = [],
+  myBigTeam = '',
 }) {
   return (
     <MapContainer
@@ -118,9 +121,9 @@ export default function GameMap({
         </Marker>
       )}
 
-      {/* Team's own position */}
+      {/* Own position — colored by team */}
       {teamLocation && (
-        <Marker position={[teamLocation.lat, teamLocation.lng]} icon={teamIcon}>
+        <Marker position={[teamLocation.lat, teamLocation.lng]} icon={makeTeamDotIcon(bigTeamColor(myBigTeam) || '#3498db', 16, 3)}>
           <Popup>
             <strong>You are here</strong><br />
             Updated: {new Date(teamLocation.timestamp).toLocaleTimeString()}
@@ -128,11 +131,12 @@ export default function GameMap({
         </Marker>
       )}
 
-      {/* Same-team subteam positions */}
-      {teammateLocations.map(({ name, lat, lng, timestamp }) => (
-        <Marker key={name} position={[lat, lng]} icon={teammateIcon}>
+      {/* All other visible players — colored by their bigTeam */}
+      {allTeamLocations.map(({ name, bigTeam, lat, lng, timestamp }) => (
+        <Marker key={name} position={[lat, lng]} icon={makeTeamDotIcon(bigTeamColor(bigTeam), 12, 2)}>
           <Popup>
             <strong>{name}</strong><br />
+            Team: {bigTeam}<br />
             Updated: {new Date(timestamp).toLocaleTimeString()}
           </Popup>
         </Marker>
