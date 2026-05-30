@@ -73,6 +73,15 @@ export default function AdminPage() {
   const [chatUnreadMap, setChatUnreadMap] = useState({});
   const chatTargetRef = useRef(chatTarget);
 
+  const [correctionsOpen, setCorrectionsOpen] = useState(false);
+  const [corrTeam, setCorrTeam] = useState('');
+  const [corrScoreInput, setCorrScoreInput] = useState('');
+  const [corrRiddleInput, setCorrRiddleInput] = useState('');
+  const [corrRadiusInput, setCorrRadiusInput] = useState('');
+  const [corrForceLat, setCorrForceLat] = useState('');
+  const [corrForceLng, setCorrForceLng] = useState('');
+  const [corrStarReassign, setCorrStarReassign] = useState({});
+
   // Keep chatTargetRef in sync for use inside Firebase listeners
   useEffect(() => { chatTargetRef.current = chatTarget; }, [chatTarget]);
 
@@ -448,6 +457,64 @@ export default function AdminPage() {
     });
     setFugAdminAnnouncing(false);
   };
+
+  const overrideGameStatus = (status) =>
+    update(ref(db, `games/${activeGameCode}`), { status });
+
+  const forceTeamScore = (teamName, score) =>
+    update(ref(db, `games/${activeGameCode}/teams/${teamName}`), { score: Math.max(0, parseInt(score, 10) || 0) });
+
+  const forceTeamRiddle = (teamName, riddle) =>
+    update(ref(db, `games/${activeGameCode}/teams/${teamName}`), { currentRiddle: Math.max(0, Math.min(RIDDLE_COUNT, parseInt(riddle, 10) || 0)) });
+
+  const forceTeamRadius = async (teamName, radius) => {
+    const r = Math.max(30, Math.min(2000, parseInt(radius, 10) || STARTING_RADIUS));
+    const fug = activeGame?.fugitive?.lastUpdate;
+    if (fug?.lat != null) {
+      await update(ref(db, `games/${activeGameCode}/teams/${teamName}`), {
+        currentHint: generateHint(fug.lat, fug.lng, r),
+      });
+    } else {
+      const snap = await get(ref(db, `games/${activeGameCode}/teams/${teamName}/currentHint`));
+      const hint = snap.val();
+      if (hint) {
+        await update(ref(db, `games/${activeGameCode}/teams/${teamName}/currentHint`), { radius: r });
+      }
+    }
+  };
+
+  const revokeTeamCatch = (teamName) =>
+    update(ref(db, `games/${activeGameCode}/teams/${teamName}`), { caughtFugitive: false });
+
+  const forceSetMrXGPS = async () => {
+    const lat = parseFloat(corrForceLat);
+    const lng = parseFloat(corrForceLng);
+    if (isNaN(lat) || isNaN(lng)) return;
+    const timestamp = Date.now();
+    await set(ref(db, `games/${activeGameCode}/fugitive/lastUpdate`), { lat, lng, timestamp });
+    const teamsSnap = await get(ref(db, `games/${activeGameCode}/teams`));
+    const allTeams = teamsSnap.val() ?? {};
+    const updates = {};
+    Object.entries(allTeams).forEach(([tName, tData]) => {
+      const radius = tData.currentHint?.radius ?? STARTING_RADIUS;
+      updates[`${tName}/currentHint`] = generateHint(lat, lng, radius);
+    });
+    if (Object.keys(updates).length > 0) {
+      await update(ref(db, `games/${activeGameCode}/teams`), updates);
+    }
+  };
+
+  const resetUndercoverCooldown = () =>
+    remove(ref(db, `games/${activeGameCode}/fugitive/undercover`));
+
+  const forceSubmissionStatus = (teamName, idx, status) =>
+    update(ref(db, `games/${activeGameCode}/teams/${teamName}/submissions/${idx}`), { status });
+
+  const unclaimStar = (i) =>
+    update(ref(db, `games/${activeGameCode}/stars/${i}`), { claimedBy: null, claimedTeam: null, claimedAt: null });
+
+  const reassignStar = (i, bigTeam) =>
+    update(ref(db, `games/${activeGameCode}/stars/${i}`), { claimedBy: bigTeam, claimedTeam: bigTeam, claimedAt: Date.now() });
 
   // Derived data
   const teams = activeGame?.teams ? Object.entries(activeGame.teams) : [];
@@ -1063,6 +1130,271 @@ export default function AdminPage() {
               </button>
             </div>
           )}
+
+          {/* Admin Corrections */}
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderLeft: '4px solid #e67e22' }}>
+            <button
+              onClick={() => setCorrectionsOpen(v => !v)}
+              style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+            >
+              <h2 style={{ fontSize: '1rem', color: '#e67e22' }}>🔧 Admin Corrections</h2>
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{correctionsOpen ? '▲ hide' : '▼ show'}</span>
+            </button>
+            {!correctionsOpen && (
+              <p className="text-muted" style={{ fontSize: '0.75rem' }}>Emergency fixes — score, challenge progress, GPS, stars, game status.</p>
+            )}
+            {correctionsOpen && (() => {
+              const cs = { display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid var(--color-border)' };
+              const cl = { fontSize: '0.7rem', fontWeight: 700, color: '#e67e22', textTransform: 'uppercase', letterSpacing: '0.05em' };
+              const ch = { fontSize: '0.75rem', color: 'var(--color-text-muted)', lineHeight: 1.5 };
+              const ci = { flex: 1, padding: '0.4rem 0.5rem', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '6px', color: 'var(--color-text)', fontSize: '0.85rem' };
+              const allBigTeams = [...new Set(teams.map(([, d]) => d.bigTeam).filter(Boolean))];
+              const corrTeamData = corrTeam ? activeGame?.teams?.[corrTeam] : null;
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+                  {/* GAME STATUS */}
+                  <div style={cs}>
+                    <p style={cl}>Game Status</p>
+                    <p style={ch}><strong>Active</strong> = game running · <strong>Waiting</strong> = back to lobby (teams can re-join) · <strong>Ended</strong> = victory screen shown to all players.</p>
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                      {['waiting', 'active', 'ended'].map(s => (
+                        <button
+                          key={s}
+                          className="btn btn-outline"
+                          style={{ flex: 1, padding: '0.4rem', fontSize: '0.8rem', textTransform: 'capitalize', borderColor: activeGame.status === s ? '#e67e22' : undefined, color: activeGame.status === s ? '#e67e22' : undefined }}
+                          onClick={() => overrideGameStatus(s)}
+                        >
+                          {activeGame.status === s ? `✓ ${s}` : s}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* MR X EMERGENCY */}
+                  <div style={cs}>
+                    <p style={cl}>Mr X Emergency</p>
+
+                    <p style={ch}><strong>Force GPS position</strong> — use when Mr X's phone lost signal or GPS froze. Paste coordinates from Google Maps (long-press a spot → copy coordinates). Automatically refreshes all team hint zones from the new position.</p>
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                      <input
+                        type="number"
+                        placeholder="Lat (e.g. 52.5200)"
+                        value={corrForceLat}
+                        onChange={e => setCorrForceLat(e.target.value)}
+                        style={ci}
+                        step="0.00001"
+                      />
+                      <input
+                        type="number"
+                        placeholder="Lng (e.g. 13.4050)"
+                        value={corrForceLng}
+                        onChange={e => setCorrForceLng(e.target.value)}
+                        style={ci}
+                        step="0.00001"
+                      />
+                    </div>
+                    {fugitiveLocation && (
+                      <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                        Last known: {fugitiveLocation.lat.toFixed(5)}, {fugitiveLocation.lng.toFixed(5)}
+                      </p>
+                    )}
+                    <button
+                      className="btn btn-outline"
+                      style={{ borderColor: '#e67e22', color: '#e67e22', fontSize: '0.85rem' }}
+                      onClick={forceSetMrXGPS}
+                      disabled={!corrForceLat || !corrForceLng}
+                    >
+                      → Set Mr X Position + Refresh All Zones
+                    </button>
+
+                    <p style={{ ...ch, marginTop: '0.25rem' }}><strong>Reset undercover cooldown</strong> — clears the 10-min cooldown timer so Mr X can go undercover immediately. Use if the cooldown was triggered by mistake or you want to allow another undercover as admin ruling.</p>
+                    <button className="btn btn-outline" style={{ fontSize: '0.85rem' }} onClick={resetUndercoverCooldown}>
+                      Reset Undercover Cooldown
+                    </button>
+                  </div>
+
+                  {/* TEAM CORRECTIONS */}
+                  <div style={cs}>
+                    <p style={cl}>Team Corrections</p>
+                    <p style={ch}>Select a team to fix their score, challenge index, hint zone radius, or submission statuses.</p>
+                    <select
+                      value={corrTeam}
+                      onChange={e => {
+                        const t = e.target.value;
+                        setCorrTeam(t);
+                        if (t) {
+                          const d = activeGame?.teams?.[t];
+                          setCorrScoreInput(String(d?.score ?? 0));
+                          setCorrRiddleInput(String(d?.currentRiddle ?? 0));
+                          setCorrRadiusInput(String(d?.currentHint?.radius ?? STARTING_RADIUS));
+                        }
+                      }}
+                      style={{ width: '100%', padding: '0.5rem', borderRadius: 6, background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)', fontSize: '0.875rem' }}
+                    >
+                      <option value="">— Select team —</option>
+                      {teams.map(([name, data]) => (
+                        <option key={name} value={name}>{name} · {data.score ?? 0} pts · challenge {(data.currentRiddle ?? 0) + 1}/{RIDDLE_COUNT}</option>
+                      ))}
+                    </select>
+
+                    {corrTeamData && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', padding: '0.6rem', background: 'var(--color-bg)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
+
+                        {/* Score */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                          <p style={ch}><strong>Score</strong> — current: <strong>{corrTeamData.score ?? 0} pts</strong>. Set to any value directly. Use to fix double-approvals or wrong rejections.</p>
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <input type="number" value={corrScoreInput} onChange={e => setCorrScoreInput(e.target.value)} style={ci} min="0" />
+                            <button className="btn btn-outline" style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem' }} onClick={() => forceTeamScore(corrTeam, corrScoreInput)}>
+                              Set Score
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Riddle index */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                          <p style={ch}><strong>Challenge progress</strong> — current: <strong>#{(corrTeamData.currentRiddle ?? 0) + 1} of {RIDDLE_COUNT}</strong>. Move forward to give credit for a skipped challenge, move back to make them redo one.</p>
+                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                            <button
+                              className="btn btn-outline"
+                              style={{ width: '2.5rem', height: '2.5rem', padding: 0, fontSize: '1.1rem', flexShrink: 0 }}
+                              onClick={() => setCorrRiddleInput(v => String(Math.max(0, parseInt(v || '0') - 1)))}
+                            >−</button>
+                            <input
+                              type="number"
+                              value={corrRiddleInput}
+                              onChange={e => setCorrRiddleInput(e.target.value)}
+                              style={{ ...ci, textAlign: 'center' }}
+                              min="0"
+                              max={RIDDLE_COUNT}
+                            />
+                            <button
+                              className="btn btn-outline"
+                              style={{ width: '2.5rem', height: '2.5rem', padding: 0, fontSize: '1.1rem', flexShrink: 0 }}
+                              onClick={() => setCorrRiddleInput(v => String(Math.min(RIDDLE_COUNT, parseInt(v || '0') + 1)))}
+                            >+</button>
+                            <button className="btn btn-outline" style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem', flexShrink: 0 }} onClick={() => forceTeamRiddle(corrTeam, corrRiddleInput)}>
+                              Set
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Hint radius */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                          <p style={ch}><strong>Hint zone radius</strong> — current: <strong>{corrTeamData.currentHint?.radius ?? STARTING_RADIUS}m</strong>. Smaller = tighter circle around Mr X. Recenters on Mr X's current GPS if available. Min 30m, max 2000m.</p>
+                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                            <input type="number" value={corrRadiusInput} onChange={e => setCorrRadiusInput(e.target.value)} style={ci} min="30" max="2000" step="50" />
+                            <span style={{ alignSelf: 'center', fontSize: '0.8rem', color: 'var(--color-text-muted)', flexShrink: 0 }}>m</span>
+                            <button className="btn btn-outline" style={{ width: 'auto', padding: '0.4rem 0.75rem', fontSize: '0.8rem', flexShrink: 0 }} onClick={() => forceTeamRadius(corrTeam, corrRadiusInput)}>
+                              Set Radius
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Revoke catch */}
+                        {corrTeamData.caughtFugitive && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                            <p style={ch}><strong>Revoke catch</strong> — this team is currently marked as having caught Mister X. Remove the flag if it was awarded by mistake (e.g. wrong button tap).</p>
+                            <button className="btn btn-primary" style={{ fontSize: '0.85rem' }} onClick={() => revokeTeamCatch(corrTeam)}>
+                              Revoke Catch Flag
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Submissions */}
+                        {corrTeamData.submissions && Object.keys(corrTeamData.submissions).length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                            <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Submission statuses</p>
+                            <p style={ch}>Force a submission to a different status without touching the score. Use if a submission is stuck in pending, or was approved/rejected incorrectly and you have already fixed the score above.</p>
+                            {Object.entries(corrTeamData.submissions)
+                              .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+                              .map(([idx, sub]) => (
+                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.35rem 0.5rem', background: 'var(--color-surface)', borderRadius: 6 }}>
+                                  <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                                    #{parseInt(idx) + 1}{' '}
+                                    <span style={{ color: sub.status === 'approved' ? 'var(--color-success)' : sub.status === 'rejected' ? 'var(--color-primary)' : 'var(--color-accent)', fontWeight: 400 }}>
+                                      {sub.status}
+                                    </span>
+                                  </span>
+                                  <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                    {['pending', 'approved', 'rejected'].filter(s => s !== sub.status).map(s => (
+                                      <button
+                                        key={s}
+                                        className="btn btn-outline"
+                                        style={{ width: 'auto', padding: '0.2rem 0.45rem', fontSize: '0.68rem' }}
+                                        onClick={() => forceSubmissionStatus(corrTeam, idx, s)}
+                                      >
+                                        → {s}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* STARS */}
+                  {(() => {
+                    const claimedStars = STARS
+                      .map((star, i) => ({ star, i, data: activeGame?.stars?.[i] }))
+                      .filter(({ data }) => data?.claimedBy);
+                    return (
+                      <div style={cs}>
+                        <p style={cl}>Stars</p>
+                        {claimedStars.length === 0 ? (
+                          <p style={ch}>No stars claimed yet — nothing to correct.</p>
+                        ) : (
+                          <>
+                            <p style={ch}><strong>Unclaim</strong> puts the star back as released-but-unclaimed. <strong>Re-assign</strong> transfers it to a different team. Use if GPS glitch caused the wrong team to claim a star.</p>
+                            {claimedStars.map(({ star, i, data }) => (
+                              <div key={i} style={{ padding: '0.5rem', background: 'var(--color-bg)', borderRadius: 8 }}>
+                                <p style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.35rem' }}>
+                                  #{i + 1} {star.station} — <span style={{ color: '#f1c40f' }}>claimed by {data.claimedBy}</span>
+                                </p>
+                                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                  <button
+                                    className="btn btn-outline"
+                                    style={{ width: 'auto', padding: '0.25rem 0.6rem', fontSize: '0.75rem', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
+                                    onClick={() => unclaimStar(i)}
+                                  >
+                                    Unclaim
+                                  </button>
+                                  <select
+                                    value={corrStarReassign[i] ?? ''}
+                                    onChange={e => setCorrStarReassign(m => ({ ...m, [i]: e.target.value }))}
+                                    style={{ flex: 1, fontSize: '0.8rem', padding: '0.25rem 0.4rem', background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 6 }}
+                                  >
+                                    <option value="">Re-assign to…</option>
+                                    {allBigTeams.filter(t => t !== data.claimedBy).map(t => (
+                                      <option key={t} value={t}>{t}</option>
+                                    ))}
+                                  </select>
+                                  {corrStarReassign[i] && (
+                                    <button
+                                      className="btn btn-outline"
+                                      style={{ width: 'auto', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                                      onClick={() => { reassignStar(i, corrStarReassign[i]); setCorrStarReassign(m => ({ ...m, [i]: '' })); }}
+                                    >
+                                      → Assign
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                </div>
+              );
+            })()}
+          </div>
 
           {/* Chat */}
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
