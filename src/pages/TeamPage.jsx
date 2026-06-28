@@ -17,6 +17,7 @@ import { TRANSPORT_TYPES, POWER_UP_CONFIG } from '../data/powerUps';
 import { LANDMARKS, LANDMARK_TRIGGER_RADIUS } from '../data/landmarks';
 import { STARS, STAR_COLLECTION_RADIUS, STAR_TRADE_COST, STAR_VOTE_DURATION_MS } from '../data/stars';
 import WrappedScreen, { NicknameInput } from '../components/WrappedScreen';
+import PhotoDownloadButton from '../components/PhotoDownloadButton';
 
 const TRANSPORT_MAP = Object.fromEntries(TRANSPORT_TYPES.map(t => [t.key, t]));
 
@@ -609,6 +610,16 @@ export default function TeamPage() {
           </div>
         )}
       </div>
+
+      {/* Photo download — available any time, during or after the game */}
+      <PhotoDownloadButton
+        submissions={teamData?.submissions}
+        teamName={teamName}
+        gameCode={gameCode}
+        dateStr={game?.createdAt
+          ? new Date(game.createdAt).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Vienna' })
+          : ''}
+      />
 
       {game?.status === 'waiting' && (
         <div className="card" style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>

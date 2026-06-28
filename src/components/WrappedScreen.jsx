@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase/config';
 import { ref, update } from 'firebase/database';
+import PhotoDownloadButton from './PhotoDownloadButton';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -196,7 +197,7 @@ function roundRect(ctx, x, y, w, h, r) {
   }
 }
 
-function SummaryCard({ game, teamName, bigTeam, nickname }) {
+function SummaryCard({ game, teamName, bigTeam, nickname, gameCode }) {
   const isMrX = !teamName;
   const teamData = game?.teams?.[teamName] ?? {};
   const displayName = nickname || teamName || 'Mister X';
@@ -434,6 +435,17 @@ function SummaryCard({ game, teamName, bigTeam, nickname }) {
           {generating ? '⏳ Generating…' : '⬇️ Download Summary Card'}
         </button>
       </div>
+
+      {/* Download all team photos (watermarked) */}
+      {!isMrX && (
+        <PhotoDownloadButton
+          submissions={teamData.submissions}
+          teamName={teamName}
+          gameCode={gameCode}
+          dateStr={new Date(game?.createdAt ?? Date.now())
+            .toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Vienna' })}
+        />
+      )}
     </div>
   );
 }
