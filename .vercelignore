@@ -1,0 +1,17 @@
+# Never upload these to Vercel (the build only needs source + package files)
+node_modules
+dist
+.git
+.vercel
+.firebase
+.claude
+aftermovie
+
+# Test artefacts / screenshots / logs
+*.png
+verify-screenshots
+*.log
+dev-server.log
+
+# Test harness scripts (run locally, not part of the app)
+test-*.mjs

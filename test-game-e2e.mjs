@@ -163,11 +163,15 @@ try {
   }
   console.log('  · three hunter phones joined with mocked GPS');
 
-  const signedIn = await red1.page.evaluate(async () => {
-    const { auth } = await import('/src/firebase/config.js');
-    return !!auth.currentUser?.uid;
-  });
-  check('every device is signed in anonymously', signedIn === true);
+  const isLocal = /localhost|127\.0\.0\.1/.test(APP_URL);
+  if (isLocal) {
+    // Only the dev server exposes the module graph; production bundles hide it.
+    const signedIn = await red1.page.evaluate(async () => {
+      const { auth } = await import('/src/firebase/config.js');
+      return !!auth.currentUser?.uid;
+    });
+    check('every device is signed in anonymously', signedIn === true);
+  }
   check('unauthenticated REST read is denied', (await fetch(unauthApi(`games/${GAME}`))).status === 401);
 
   const locations = await waitForDb(
