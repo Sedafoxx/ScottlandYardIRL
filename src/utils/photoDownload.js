@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { hasPhoto, resolvePhoto } from './photoStore';
 
 // Load /logo.png once. Same-origin -> never taints the canvas.
 let _logoPromise = null;
@@ -101,9 +102,9 @@ async function watermarkPhoto(url, logo, dateStr) {
  * @param {(done:number, total:number) => void} [opts.onProgress]
  * @returns {Promise<number>} number of photos written
  */
-export async function downloadTeamPhotos({ submissions, teamName, gameCode, dateStr, onProgress }) {
+export async function buildTeamPhotoZip({ submissions, teamName, gameCode, dateStr, onProgress }) {
   const entries = Object.entries(submissions ?? {})
-    .filter(([, s]) => s && s.photoUrl)
+    .filter(([, s]) => hasPhoto(s))
     .sort((a, b) => Number(a[0]) - Number(b[0]));
 
   if (!entries.length) {
@@ -122,28 +123,74 @@ export async function downloadTeamPhotos({ submissions, teamName, gameCode, date
     const [idx, sub] = entries[i];
     const label = `${String(Number(idx) + 1).padStart(2, '0')}_${sub.status ?? 'photo'}`;
     try {
-      const blob = await watermarkPhoto(sub.photoUrl, logo, dateStr);
-      zip.file(`${safeTeam}/${label}.jpg`, blob);
-    } catch {
-      // fall back to the raw photo if watermarking fails (e.g. fetch error)
+      // Storage URL or database data URL — both resolve to something fetchable.
+      const url = await resolvePhoto(sub);
+      if (!url) throw new Error('no-photo-source');
       try {
-        const raw = await (await fetch(sub.photoUrl)).blob();
-        const ext = raw.type.includes('png') ? 'png' : 'jpg';
-        zip.file(`${safeTeam}/${label}.${ext}`, raw);
+        const blob = await watermarkPhoto(url, logo, dateStr);
+        zip.file(`${safeTeam}/${label}.jpg`, blob);
       } catch {
-        zip.file(`${safeTeam}/${label}_failed.txt`, `Could not fetch: ${sub.photoUrl}`);
+        // fall back to the raw photo if watermarking fails (e.g. fetch error)
+        const raw = await (await fetch(url)).blob();
+        zip.file(`${safeTeam}/${label}.${extensionFor(raw.type)}`, raw);
       }
+    } catch {
+      zip.file(`${safeTeam}/${label}_failed.txt`, `Could not fetch photo ${label}`);
     }
     done++;
     onProgress?.(done, entries.length);
   }
 
   const zipBlob = await zip.generateAsync({ type: 'blob' });
-  const url = URL.createObjectURL(zipBlob);
+  return { blob: zipBlob, filename: `${safeTeam}-photos-${gameCode}.zip`, count: done };
+}
+
+function extensionFor(mime = '') {
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('webp')) return 'webp';
+  if (mime.includes('heic') || mime.includes('heif')) return 'heic';
+  return 'jpg';
+}
+
+/**
+ * Save a blob on the phone.
+ *
+ * iOS Safari silently drops `a.download` clicks that happen AFTER an await
+ * (the user-activation window has passed), which is why participants "could not
+ * download their own images". Prefer the share sheet when files can be shared,
+ * fall back to a real anchor click everywhere else.
+ */
+export async function saveBlob(blob, filename) {
+  const file = typeof File !== 'undefined'
+    ? new File([blob], filename, { type: blob.type || 'application/zip' })
+    : null;
+
+  if (file && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: filename });
+      return 'shared';
+    } catch (err) {
+      if (err?.name === 'AbortError') return 'shared';
+      // otherwise fall through to the anchor
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${safeTeam}-photos-${gameCode}.zip`;
+  a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
-  return done;
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return 'downloaded';
+}
+
+/** Build the zip and hand it to the browser/share sheet. */
+export async function downloadTeamPhotos(opts) {
+  const { blob, filename, count } = await buildTeamPhotoZip(opts);
+  const how = await saveBlob(blob, filename);
+  return { count, how };
 }

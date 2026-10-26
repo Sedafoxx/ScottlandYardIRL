@@ -1,0 +1,18 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Game photos. Bytes are time-locked ciphertext (AES-GCM, key derived from
+    // the game code), and access additionally requires a signed-in device.
+    match /photos/{gameCode}/{player}/{fileName} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.resource.size < 6 * 1024 * 1024;
+      allow delete: if request.auth != null;
+    }
+
+    // Nothing else is stored in this bucket.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

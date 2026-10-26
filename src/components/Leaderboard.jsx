@@ -43,7 +43,7 @@ export default function Leaderboard({ teams, currentTeam, stars, starTrades }) {
                 <span style={{ fontWeight: 700 }}>{bigTeamName}</span>
                 {multiMember && (
                   <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
-                    {group.members.length} subteams
+                    {group.members.length} players
                   </span>
                 )}
                 {group.caughtFugitive && (
@@ -61,7 +61,7 @@ export default function Leaderboard({ teams, currentTeam, stars, starTrades }) {
               </div>
             </div>
 
-            {/* Individual subteam rows */}
+            {/* Individual player rows */}
             {multiMember && sortedMembers.map(([name, data]) => {
               const isMe = name === currentTeam;
               return (

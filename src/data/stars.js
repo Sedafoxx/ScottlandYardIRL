@@ -1,3 +1,8 @@
+// Star hunt is parked for the public release — no stars are placed, released,
+// collected or traded while this is false. The code below is kept intact so the
+// mechanic can be switched back on once a route/star setup exists.
+export const STARS_ENABLED = false;
+
 export const STAR_COLLECTION_RADIUS = 20;
 const R = STAR_COLLECTION_RADIUS;
 export const STAR_TRADE_COST = 3;

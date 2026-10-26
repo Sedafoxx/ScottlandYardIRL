@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { db, storage } from '../firebase/config';
+import { db } from '../firebase/config';
 import { ref, onValue, set, update, push } from 'firebase/database';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { savePhoto } from '../utils/photoStore';
 import Leaderboard from '../components/Leaderboard';
 import GameMap from '../components/Map/GameMap';
 import WrappedScreen from '../components/WrappedScreen';
@@ -60,19 +60,18 @@ export default function FugitivePage() {
         if ((gameDataRef.current?.fugitive?.undercover?.until ?? 0) > Date.now()) return;
         set(ref(db, `games/${gameCode}/fugitive/lastUpdate`), { lat, lng, timestamp });
 
-        // Recalculate any team's hint circle the fugitive has moved outside of
-        const teams = gameDataRef.current?.teams;
-        if (teams) {
+        // Recalculate any big team's shared zone the fugitive has moved outside of
+        const zones = gameDataRef.current?.zones;
+        if (zones) {
           const updates = {};
-          Object.entries(teams).forEach(([tName, tData]) => {
-            const hint = tData.currentHint;
-            if (!hint) return;
-            if (haversineDistance(lat, lng, hint.lat, hint.lng) > hint.radius) {
-              updates[`${tName}/currentHint`] = generateHint(lat, lng, hint.radius);
+          Object.entries(zones).forEach(([bigTeam, zone]) => {
+            if (!zone) return;
+            if (haversineDistance(lat, lng, zone.lat, zone.lng) > zone.radius) {
+              updates[bigTeam] = generateHint(lat, lng, zone.radius);
             }
           });
           if (Object.keys(updates).length > 0) {
-            update(ref(db, `games/${gameCode}/teams`), updates);
+            update(ref(db, `games/${gameCode}/zones`), updates);
           }
         }
       },
@@ -122,12 +121,20 @@ export default function FugitivePage() {
     setSelfieUploading(true);
     setSelfieError('');
     try {
-      const path = `selfies/${gameCode}/fugitive_${Date.now()}`;
-      const sRef = storageRef(storage, path);
-      await uploadBytes(sRef, file);
-      const url = await getDownloadURL(sRef);
+      // HEIC conversion, downscaling, Storage upload and the database fallback
+      // all live in photoStore so every photo in the game behaves the same.
+      const { photoUrl, photoRef, photoEnc } = await savePhoto({ file, gameCode, teamName: '_misterx', label: 'selfie' });
+      const request = gameDataRef.current?.selfieRequest ?? {};
       await update(ref(db, `games/${gameCode}`), {
-        selfieRequest: { ...gameDataRef.current?.selfieRequest, photoUrl: url, status: 'fulfilled', fulfilledAt: Date.now() },
+        selfieRequest: {
+          ...request,
+          photoUrl,
+          photoRef,
+          photoEnc,
+          gameCode,
+          status: 'fulfilled',
+          fulfilledAt: Date.now(),
+        },
       });
     } catch {
       setSelfieError('Upload failed. Try again.');
@@ -374,7 +381,9 @@ export default function FugitivePage() {
             <div>
               <p style={{ fontWeight: 700, color: 'var(--color-fugitive)' }}>Mister X — Team Overview</p>
               <p className="text-muted" style={{ fontSize: '0.75rem' }}>
-                {isUndercover ? '🕶️ You are undercover — teams cannot see you' : 'Your location is visible to teams with zone hints'}
+                {isUndercover
+                  ? '🕶️ You are undercover — your position is hidden from teams'
+                  : 'Your GPS only reaches teams as a zone hint — never as a dot'}
               </p>
               {allTeamLocations.length > 0 && (
                 <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.1rem' }}>
@@ -393,7 +402,7 @@ export default function FugitivePage() {
           <div style={{ flex: 1 }}>
             <GameMap
               teamLocation={lastPos}
-              allTeamLocations={isUndercover ? allTeamLocations : []}
+              allTeamLocations={allTeamLocations}
             />
           </div>
         </div>

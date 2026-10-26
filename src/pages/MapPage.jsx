@@ -3,6 +3,7 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase/config';
 import { ref, onValue } from 'firebase/database';
 import GameMap from '../components/Map/GameMap';
+import { resolveZone } from '../utils/zones';
 
 export default function MapPage() {
   const { gameCode } = useParams();
@@ -26,7 +27,8 @@ export default function MapPage() {
   if (loading) return <div className="page" style={{ justifyContent: 'center', textAlign: 'center' }}>Loading map...</div>;
 
   const teamData = teamName && game?.teams?.[teamName];
-  const currentHint = teamData?.currentHint ?? null;
+  // Shared per big team — every player on that side sees the same circle.
+  const currentHint = resolveZone(game, bigTeam, teamData);
   const liveFeedUntil = parseInt(searchParams.get('livefeed') || '0', 10);
   const liveFeedActive = !isAdmin && liveFeedUntil > Date.now();
   const fugitiveLocation = (isAdmin || liveFeedActive) ? game?.fugitive?.lastUpdate : null;
@@ -36,7 +38,7 @@ export default function MapPage() {
   const teammateLocations = !isAdmin && bigTeam && game?.teams
     ? Object.entries(game.teams)
         .filter(([n, d]) => n !== teamName && (d.bigTeam || n) === bigTeam && d.location)
-        .map(([n, d]) => ({ name: n, lat: d.location.lat, lng: d.location.lng, timestamp: d.location.timestamp }))
+        .map(([n, d]) => ({ name: n, bigTeam: d.bigTeam || bigTeam, lat: d.location.lat, lng: d.location.lng, timestamp: d.location.timestamp }))
     : [];
 
   return (
@@ -57,8 +59,8 @@ export default function MapPage() {
               : liveFeedActive
                 ? '📡 Live Feed — Mister X location visible!'
                 : currentHint
-                  ? `Zone hint active — ${currentHint.radius}m radius`
-                  : 'No hint yet — complete a challenge'}
+                  ? `${bigTeam} zone — ${currentHint.radius}m radius (shared)`
+                  : 'No zone yet — complete a challenge'}
           </p>
           {!isAdmin && teammateLocations.length > 0 && (
             <p style={{ fontSize: '0.7rem', color: '#2ecc71', marginTop: '0.1rem' }}>
@@ -82,7 +84,8 @@ export default function MapPage() {
           teamLocation={teamLocation}
           visitedLandmarks={teamData?.visitedLandmarks ?? {}}
           isAdmin={isAdmin}
-          teammateLocations={teammateLocations}
+          allTeamLocations={teammateLocations}
+          myBigTeam={bigTeam}
         />
       </div>
     </div>

@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import heic2any from 'heic2any';
-import { db, storage } from '../../firebase/config';
+import { db } from '../../firebase/config';
 import { ref as dbRef, onValue, update } from 'firebase/database';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { DIFFICULTY_CONFIG } from '../../utils/hints';
+import { savePhoto } from '../../utils/photoStore';
+import PhotoImage from '../PhotoImage';
 
-export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex }) {
+export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex, teamSize = 1 }) {
   const [chosenOption, setChosenOption] = useState(null);
   const [submission, setSubmission] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -36,30 +36,22 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
   };
 
   const handleFile = async (e) => {
-    let file = e.target.files[0];
+    const file = e.target.files[0];
     if (!file || !chosenOption) return;
     setUploading(true);
     setUploadError('');
     try {
-      if (
-        file.type === 'image/heic' ||
-        file.type === 'image/heif' ||
-        file.name.toLowerCase().endsWith('.heic') ||
-        file.name.toLowerCase().endsWith('.heif')
-      ) {
-        const blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
-        file = new File([blob instanceof Blob ? blob : blob[0]], 'photo.jpg', { type: 'image/jpeg' });
-      }
-      const path = `photos/${gameCode}/${teamName}/${riddleIndex}_${Date.now()}`;
-      const sRef = storageRef(storage, path);
-      await uploadBytes(sRef, file);
-      const url = await getDownloadURL(sRef);
+      // Storage first, database fallback — never loses the photo to a quota error.
+      const { photoUrl, photoRef, photoEnc } = await savePhoto({ file, gameCode, teamName, label: riddleIndex });
       // Advance the riddle and store the submission atomically — team moves on immediately,
       // admin approval only retroactively awards points and shrinks the zone.
       await update(dbRef(db, `games/${gameCode}/teams/${teamName}`), {
         currentRiddle: riddleIndex + 1,
         [`submissions/${riddleIndex}`]: {
-          photoUrl: url,
+          photoUrl,
+          photoRef,
+          photoEnc,
+          gameCode,
           status: 'pending',
           submittedAt: Date.now(),
           challenge: chosenOption.challenge,
@@ -89,7 +81,7 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
           <p style={{ fontSize: '0.75rem', fontWeight: 700, color: c.color, textTransform: 'uppercase' }}>{c.label} challenge</p>
           <p style={{ fontSize: '0.875rem', marginTop: '0.25rem', lineHeight: 1.5 }}>{submission.challenge}</p>
         </div>
-        <img src={submission.photoUrl} alt="Submitted" style={{ width: '100%', borderRadius: '8px', objectFit: 'cover', maxHeight: '240px', opacity: approved ? 1 : 0.6 }} />
+        <PhotoImage sub={submission} alt="Submitted" style={{ width: '100%', borderRadius: '8px', objectFit: 'cover', maxHeight: '240px', opacity: approved ? 1 : 0.6 }} />
         <p style={{ fontSize: '0.875rem', color: approved ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
           {approved ? `Photo approved — +${c.points} pts awarded!` : 'Photo submitted — pending admin review for bonus points.'}
         </p>
@@ -106,7 +98,7 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
             <span style={{ fontSize: '0.75rem', fontWeight: 700, color: c.color, textTransform: 'uppercase' }}>{c.label}</span>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>-{DIFFICULTY_CONFIG[chosenOption.difficulty].reduction * 100}% radius</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>-{(DIFFICULTY_CONFIG[chosenOption.difficulty].reduction / Math.max(1, teamSize) * 100).toFixed(1)}% radius</span>
               <span style={{ fontSize: '0.75rem', color: 'var(--color-accent)', fontWeight: 600 }}>+{c.points} pts</span>
             </div>
           </div>
@@ -183,7 +175,7 @@ export default function PhotoChallenge({ riddle, gameCode, teamName, riddleIndex
                 {c.label}
               </span>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>-{DIFFICULTY_CONFIG[option.difficulty].reduction * 100}% radius</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>-{(DIFFICULTY_CONFIG[option.difficulty].reduction / Math.max(1, teamSize) * 100).toFixed(1)}% radius</span>
                 <span style={{ fontSize: '0.75rem', color: 'var(--color-accent)', fontWeight: 600 }}>+{c.points} pts</span>
               </div>
             </div>

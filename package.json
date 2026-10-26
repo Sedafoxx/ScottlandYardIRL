@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:rules": "node test-rules.mjs",
+    "test:zones": "node test-zones-unit.mjs",
+    "test:e2e": "node test-game-e2e.mjs",
+    "test:game": "node test-rules.mjs && node test-zones-unit.mjs && node test-game-e2e.mjs"
   },
   "dependencies": {
     "canvas": "^3.2.3",

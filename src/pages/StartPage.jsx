@@ -68,13 +68,14 @@ export default function StartPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
             <input
               type="number"
-              placeholder="Subteam number (optional)"
+              placeholder="Player number (optional)"
               value={subteamNum}
               onChange={(e) => setSubteamNum(e.target.value.replace(/[^0-9]/, ''))}
               min="1"
             />
             <p className="text-muted" style={{ fontSize: '0.78rem', lineHeight: 1.4 }}>
-              Same subteam number = shared progress across devices. Subteams of the same team see each other on the map and share a team chat.
+              Your own player number on this side. Each player solves their own riddles on their own phone — never pick a number someone else is using.
+              Everyone on the same big team shares one search circle, sees each other on the map and chats together.
             </p>
           </div>
         )}

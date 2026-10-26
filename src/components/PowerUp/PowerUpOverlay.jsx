@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { db } from '../../firebase/config';
-import { ref, update, runTransaction } from 'firebase/database';
+import { ref, runTransaction } from 'firebase/database';
 import { POWER_UP_CONFIG } from '../../data/powerUps';
+import { addItem } from '../../utils/items';
 
 function Overlay({ color, children }) {
   return (
@@ -18,18 +19,14 @@ function Overlay({ color, children }) {
   );
 }
 
-export default function PowerUpOverlay({ powerUp, gameCode, teamName, teams }) {
+export default function PowerUpOverlay({ powerUp, gameCode, teamName, bigTeam, teams }) {
   const [answer, setAnswer] = useState('');
   const [submitStatus, setSubmitStatus] = useState('idle'); // idle | submitting | wrong
-  const [sabotageTarget, setSabotageTarget] = useState(null);
-  const [sabotaging, setSabotaging] = useState(false);
   const [loserDismissed, setLoserDismissed] = useState(false);
 
   useEffect(() => {
     setAnswer('');
     setSubmitStatus('idle');
-    setSabotageTarget(null);
-    setSabotaging(false);
     setLoserDismissed(false);
   }, [powerUp?.launchedAt]);
 
@@ -47,30 +44,9 @@ export default function PowerUpOverlay({ powerUp, gameCode, teamName, teams }) {
   const cfg = POWER_UP_CONFIG[powerUp.type] ?? POWER_UP_CONFIG.live_feed;
   const weWon = powerUp.winner === teamName;
 
-  const applyEffect = async () => {
-    const now = Date.now();
-    const teamRef = ref(db, `games/${gameCode}/teams/${teamName}`);
-    switch (powerUp.type) {
-      case 'live_feed':
-        await update(teamRef, { liveFeedUntil: now + 2 * 60 * 1000 });
-        break;
-      case 'direction_beacon':
-        await update(teamRef, { directionBeaconUntil: now + 2 * 60 * 1000 });
-        break;
-      case 'double_zone':
-        await update(teamRef, { doubleZone: true });
-        break;
-      case 'zone_freeze':
-        await update(ref(db, `games/${gameCode}`), { zoneFreezeUntil: now + 3 * 60 * 1000 });
-        break;
-      case 'selfie_demand':
-        await update(ref(db, `games/${gameCode}`), {
-          selfieRequest: { requestedBy: teamName, requestedAt: now, status: 'pending' },
-        });
-        break;
-      // sabotage: applied separately after target is picked
-    }
-  };
+  // Winning drops the item into the team bag — nothing fires instantly, the team
+  // decides when to spend it (see components/PowerUp/ItemBag.jsx).
+  const bankItem = () => addItem({ gameCode, bigTeam, itemKey: powerUp.type });
 
   const submit = async () => {
     const normalized = answer.trim().toUpperCase();
@@ -87,28 +63,13 @@ export default function PowerUpOverlay({ powerUp, gameCode, teamName, teams }) {
         return { ...current, winner: teamName, claimedAt: Date.now(), status: 'claimed' };
       });
       if (result.committed) {
-        if (powerUp.type !== 'sabotage') await applyEffect();
-        // status will update via Firebase listener — no need to setSubmitStatus here
+        await bankItem();
       } else {
         setSubmitStatus('idle'); // someone beat us — Firebase update will show their win
       }
     } catch (e) {
       console.error(e);
       setSubmitStatus('idle');
-    }
-  };
-
-  const pickSabotageTarget = async (target) => {
-    setSabotaging(true);
-    try {
-      setSabotageTarget(target);
-      await update(ref(db, `games/${gameCode}/teams/${target}`), {
-        sabotagedUntil: Date.now() + 90 * 1000,
-      });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSabotaging(false);
     }
   };
 
@@ -121,7 +82,7 @@ export default function PowerUpOverlay({ powerUp, gameCode, teamName, teams }) {
           {powerUp.winner} claimed it!
         </p>
         <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', textAlign: 'center' }}>
-          They won {cfg.label}
+          {cfg.label} went into their item bag
         </p>
         <button
           onClick={() => setLoserDismissed(true)}
@@ -138,32 +99,6 @@ export default function PowerUpOverlay({ powerUp, gameCode, teamName, teams }) {
     );
   }
 
-  // ── We won — sabotage target picker ──────────────────────────────────────
-  if (weWon && powerUp.type === 'sabotage' && !sabotageTarget) {
-    const otherTeams = teams.filter(t => t !== teamName);
-    return (
-      <Overlay color={cfg.color}>
-        <p style={{ fontSize: '2.5rem', textAlign: 'center' }}>💣</p>
-        <p style={{ fontSize: '1.3rem', fontWeight: 800, textAlign: 'center', color: cfg.color }}>
-          You got it! Pick your target.
-        </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%', maxWidth: 320 }}>
-          {otherTeams.map(t => (
-            <button
-              key={t}
-              className="btn btn-primary"
-              style={{ background: cfg.color, borderColor: cfg.color }}
-              onClick={() => pickSabotageTarget(t)}
-              disabled={sabotaging}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      </Overlay>
-    );
-  }
-
   // ── We won ────────────────────────────────────────────────────────────────
   if (weWon) {
     return (
@@ -172,9 +107,11 @@ export default function PowerUpOverlay({ powerUp, gameCode, teamName, teams }) {
         <p style={{ fontSize: '1.4rem', fontWeight: 800, color: cfg.color, textAlign: 'center' }}>
           You got it!
         </p>
-        <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', textAlign: 'center', lineHeight: 1.6, maxWidth: 280 }}>
+        <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', textAlign: 'center', lineHeight: 1.6, maxWidth: 300 }}>
           {cfg.desc}
-          {sabotageTarget && ` — ${sabotageTarget} is locked out for 90 seconds!`}
+        </p>
+        <p style={{ fontSize: '0.8rem', color: cfg.color, textAlign: 'center', fontWeight: 700, maxWidth: 300 }}>
+          Added to your team's item bag — use it whenever you want.
         </p>
         <button
           onClick={() => setLoserDismissed(true)}
@@ -204,8 +141,13 @@ export default function PowerUpOverlay({ powerUp, gameCode, teamName, teams }) {
           {cfg.emoji} {cfg.label}
         </p>
         <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.2rem', lineHeight: 1.5 }}>
-          First to answer wins: <strong style={{ color: cfg.color }}>{cfg.desc}</strong>
+          First to answer puts it in their team's bag: <strong style={{ color: cfg.color }}>{cfg.desc}</strong>
         </p>
+        {teams?.length > 1 && (
+          <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
+            {teams.length} teams are racing for it
+          </p>
+        )}
       </div>
 
       <div style={{

@@ -96,7 +96,7 @@ export default function GameMap({
       />
       <MapViewController currentHint={currentHint} teamLocation={teamLocation} />
 
-      {/* Team view: shrinking zone circle */}
+      {/* Shared big-team zone — identical circle on every player's phone */}
       {currentHint && !isAdmin && (
         <Circle
           center={[currentHint.lat, currentHint.lng]}
@@ -104,9 +104,9 @@ export default function GameMap({
           pathOptions={{ color: '#f5a623', fillColor: '#f5a623', fillOpacity: 0.15, weight: 2 }}
         >
           <Popup>
-            <strong>Zone hint</strong><br />
+            <strong>Team zone</strong><br />
             Mister X is somewhere in this area.<br />
-            Radius: {currentHint.radius}m
+            Radius: {currentHint.radius}m · shared by your whole team
           </Popup>
         </Circle>
       )}

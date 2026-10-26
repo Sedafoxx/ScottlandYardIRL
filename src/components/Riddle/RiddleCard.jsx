@@ -7,7 +7,7 @@ import WordleChallenge from './WordleChallenge';
 import MastermindChallenge from './MastermindChallenge';
 import EquationChallenge from './EquationChallenge';
 
-export default function RiddleCard({ riddle, gameCode, teamName, riddleIndex, totalRiddles, doubleZone, zoneFreezeUntil }) {
+export default function RiddleCard({ riddle, gameCode, teamName, bigTeam, teamSize = 1, riddleIndex, totalRiddles, doubleZone, zoneFreezeUntil }) {
   const [answer, setAnswer] = useState('');
   const [status, setStatus] = useState('idle'); // idle | submitting | waiting | error
   const [submission, setSubmission] = useState(null);
@@ -102,6 +102,8 @@ export default function RiddleCard({ riddle, gameCode, teamName, riddleIndex, to
           puzzle={riddle}
           gameCode={gameCode}
           teamName={teamName}
+          bigTeam={bigTeam}
+          teamSize={teamSize}
           riddleIndex={riddleIndex}
           doubleZone={doubleZone}
           zoneFreezeUntil={zoneFreezeUntil}
@@ -121,6 +123,8 @@ export default function RiddleCard({ riddle, gameCode, teamName, riddleIndex, to
           puzzle={riddle}
           gameCode={gameCode}
           teamName={teamName}
+          bigTeam={bigTeam}
+          teamSize={teamSize}
           riddleIndex={riddleIndex}
           doubleZone={doubleZone}
           zoneFreezeUntil={zoneFreezeUntil}
@@ -140,6 +144,8 @@ export default function RiddleCard({ riddle, gameCode, teamName, riddleIndex, to
           puzzle={riddle}
           gameCode={gameCode}
           teamName={teamName}
+          bigTeam={bigTeam}
+          teamSize={teamSize}
           riddleIndex={riddleIndex}
           doubleZone={doubleZone}
           zoneFreezeUntil={zoneFreezeUntil}
@@ -159,6 +165,8 @@ export default function RiddleCard({ riddle, gameCode, teamName, riddleIndex, to
           puzzle={riddle}
           gameCode={gameCode}
           teamName={teamName}
+          bigTeam={bigTeam}
+          teamSize={teamSize}
           riddleIndex={riddleIndex}
           doubleZone={doubleZone}
           zoneFreezeUntil={zoneFreezeUntil}
@@ -179,6 +187,7 @@ export default function RiddleCard({ riddle, gameCode, teamName, riddleIndex, to
           gameCode={gameCode}
           teamName={teamName}
           riddleIndex={riddleIndex}
+          teamSize={teamSize}
         />
       </div>
     );

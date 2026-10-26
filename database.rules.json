@@ -1,6 +1,95 @@
 {
   "rules": {
-    ".read": true,
-    ".write": true
+    ".read": false,
+    ".write": false,
+
+    "games": {
+      "$gameCode": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+
+        "status": {
+          ".validate": "newData.isString() && (newData.val() === 'waiting' || newData.val() === 'active' || newData.val() === 'ended')"
+        },
+
+        "fugitive": {
+          "lastUpdate": {
+            ".validate": "newData.hasChildren(['lat','lng','timestamp']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lng').isNumber() && newData.child('lng').val() >= -180 && newData.child('lng').val() <= 180 && newData.child('timestamp').isNumber()"
+          },
+          "undercover": {
+            ".validate": "newData.hasChildren(['usedAt','until']) && newData.child('usedAt').isNumber() && newData.child('until').isNumber()"
+          }
+        },
+
+        "teams": {
+          "$teamName": {
+            "score": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000"
+            },
+            "currentRiddle": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 99"
+            },
+            "location": {
+              ".validate": "newData.hasChildren(['lat','lng','timestamp']) && newData.child('lat').isNumber() && newData.child('lng').isNumber() && newData.child('timestamp').isNumber()"
+            }
+          }
+        },
+
+        "zones": {
+          "$bigTeam": {
+            ".validate": "newData.hasChildren(['lat','lng','radius']) && newData.child('lat').isNumber() && newData.child('lng').isNumber() && newData.child('radius').isNumber() && newData.child('radius').val() >= 30 && newData.child('radius').val() <= 2000"
+          }
+        },
+
+        "teamItems": {
+          "$bigTeam": {
+            ".write": true,
+            "$itemKey": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 99"
+            }
+          }
+        },
+
+        "messages": {
+          "global": {
+            "$msgId": {
+              ".validate": "newData.hasChildren(['text','timestamp']) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('timestamp').isNumber()"
+            }
+          },
+          "teams": {
+            "$team": {
+              "$msgId": {
+                ".validate": "newData.hasChildren(['text','timestamp']) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('timestamp').isNumber()"
+              }
+            }
+          },
+          "bigteam": {
+            "$bigTeam": {
+              "$msgId": {
+                ".validate": "newData.hasChildren(['text','timestamp']) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('timestamp').isNumber()"
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "photos": {
+      "$gameCode": {
+        ".write": "auth != null",
+        "$key": {
+          ".read": "auth != null",
+          ".validate": "newData.child('createdAt').isNumber() && ((newData.hasChildren(['cipher','iv']) && newData.child('cipher').isString() && newData.child('cipher').val().length > 100 && newData.child('cipher').val().length <= 600000 && newData.child('iv').isString() && newData.child('iv').val().length >= 12) || (newData.hasChildren(['dataUrl']) && newData.child('dataUrl').isString() && newData.child('dataUrl').val().length > 100 && newData.child('dataUrl').val().length <= 400000))"
+        }
+      }
+    },
+
+    "fugitiveCodes": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && !data.exists()",
+        ".validate": "newData.isString() && newData.val().matches(/^[A-Z0-9]{5,8}$/)"
+      }
+    }
   }
 }

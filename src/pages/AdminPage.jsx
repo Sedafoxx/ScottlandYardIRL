@@ -1,41 +1,35 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import JSZip from 'jszip';
-import heic2any from 'heic2any';
 import { db } from '../firebase/config';
 import { ref, onValue, set, update, get, remove, push } from 'firebase/database';
 import { PUZZLES, WORDLE_WORDS, POWER_UP_RIDDLES } from '../data/puzzles';
-import { generateHint, DIFFICULTY_CONFIG, STARTING_RADIUS, haversineDistance } from '../utils/hints';
+import { DIFFICULTY_CONFIG, STARTING_RADIUS, haversineDistance } from '../utils/hints';
 import { POWER_UP_CONFIG, TRANSPORT_TYPES } from '../data/powerUps';
 import { RIDDLE_COUNT } from '../utils/riddles';
-import { STARS } from '../data/stars';
+import { STARS, STARS_ENABLED } from '../data/stars';
+import {
+  shrinkBigTeamZone,
+  setBigTeamZoneRadius,
+  recenterAllZones,
+  recentredZone,
+  countBigTeamMembers,
+} from '../utils/zones';
 import ChatPane from '../components/Chat/ChatPane';
+import PhotoImage from '../components/PhotoImage';
+import { hasPhoto, resolvePhoto, deleteGamePhotos } from '../utils/photoStore';
 
 const TRANSPORT_MAP = Object.fromEntries(TRANSPORT_TYPES.map(t => [t.key, t]));
 
-function HeicSafeImage({ src, alt, style }) {
-  const [displaySrc, setDisplaySrc] = useState(src);
-
-  const handleError = async () => {
-    try {
-      const resp = await fetch(src);
-      const blob = await resp.blob();
-      if (blob.type === 'image/heic' || blob.type === 'image/heif') {
-        const converted = await heic2any({ blob, toType: 'image/jpeg', quality: 0.85 });
-        setDisplaySrc(URL.createObjectURL(converted instanceof Blob ? converted : converted[0]));
-      }
-    } catch {
-      // leave broken image as-is
-    }
-  };
-
-  return <img src={displaySrc} alt={alt} style={style} onError={handleError} />;
+// 6 characters: short enough to type, long enough that guessing a live game is
+// not practical (36^6 ≈ 2.2 billion) — the code is the only key to a game.
+function generateCode(length = 6) {
+  let out = '';
+  while (out.length < length) out += Math.random().toString(36).substring(2);
+  return out.slice(0, length).toUpperCase();
 }
 
-function generateCode() {
-  return Math.random().toString(36).substring(2, 7).toUpperCase();
-}
-
+const KNOWN_GAMES_KEY = 'sy_admin_games';
 
 const ADMIN_PASSWORD = 'scottlandyardirl';
 
@@ -45,6 +39,7 @@ export default function AdminPage() {
   const [pwInput, setPwInput] = useState('');
   const [pwError, setPwError] = useState(false);
   const [games, setGames] = useState({});
+  const [codeInput, setCodeInput] = useState('');
   const [activeGameCode, setActiveGameCode] = useState(null);
   const [activeGame, setActiveGame] = useState(null);
   const [chatTarget, setChatTarget] = useState('global');
@@ -119,19 +114,18 @@ export default function AdminPage() {
         setFugAdminGpsError('');
         if ((activeGameRef.current?.fugitive?.undercover?.until ?? 0) > Date.now()) return;
         set(ref(db, `games/${activeGameCode}/fugitive/lastUpdate`), { lat, lng, timestamp });
-        // Update hint circles if fugitive moved outside any team's zone
-        const teamsSnap = activeGameRef.current?.teams;
-        if (teamsSnap) {
+        // Re-centre any big team's shared zone the fugitive walked out of
+        const zones = activeGameRef.current?.zones;
+        if (zones) {
           const updates = {};
-          Object.entries(teamsSnap).forEach(([tName, tData]) => {
-            const hint = tData.currentHint;
-            if (!hint) return;
-            if (haversineDistance(lat, lng, hint.lat, hint.lng) > hint.radius) {
-              updates[`${tName}/currentHint`] = generateHint(lat, lng, hint.radius);
+          Object.entries(zones).forEach(([bigTeam, zone]) => {
+            if (!zone) return;
+            if (haversineDistance(lat, lng, zone.lat, zone.lng) > zone.radius) {
+              updates[bigTeam] = recentredZone(zone, lat, lng);
             }
           });
           if (Object.keys(updates).length > 0) {
-            update(ref(db, `games/${activeGameCode}/teams`), updates);
+            update(ref(db, `games/${activeGameCode}/zones`), updates);
           }
         }
       },
@@ -213,10 +207,53 @@ export default function AdminPage() {
     );
   } // tracks in-flight approval
 
+  /**
+   * The games list is kept on THIS device instead of being world-readable in the
+   * database: a public list would let anyone enumerate live games (and then read
+   * their GPS, chat and photos through the code). Created games are remembered
+   * locally; an existing code can be opened manually.
+   */
+  const rememberGame = (code, patch = {}) => {
+    setGames((prev) => {
+      const next = { ...prev, [code]: { ...(prev[code] ?? {}), ...patch } };
+      try { localStorage.setItem(KNOWN_GAMES_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+      return next;
+    });
+  };
+
+  const forgetGame = (code) => {
+    setGames((prev) => {
+      const next = { ...prev };
+      delete next[code];
+      try { localStorage.setItem(KNOWN_GAMES_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+      return next;
+    });
+  };
+
   useEffect(() => {
-    const unsub = onValue(ref(db, 'games'), (snap) => setGames(snap.val() ?? {}));
-    return () => unsub();
+    let stored = {};
+    try { stored = JSON.parse(localStorage.getItem(KNOWN_GAMES_KEY) ?? '{}'); } catch { stored = {}; }
+    setGames(stored);
+    // Refresh the status of every remembered game — read is scoped by code.
+    Object.keys(stored).forEach((code) => {
+      get(ref(db, `games/${code}`))
+        .then((snap) => {
+          if (!snap.exists()) { forgetGame(code); return; }
+          rememberGame(code, { status: snap.val().status });
+        })
+        .catch(() => {});
+    });
   }, []);
+
+  const openExistingGame = async () => {
+    const code = codeInput.trim().toUpperCase();
+    if (!code) return;
+    const snap = await get(ref(db, `games/${code}`));
+    if (!snap.exists()) { window.alert(`No game with code ${code}.`); return; }
+    rememberGame(code, { status: snap.val().status });
+    setActiveGameCode(code);
+    setCodeInput('');
+  };
 
   useEffect(() => {
     if (!activeGameCode) return;
@@ -239,12 +276,17 @@ export default function AdminPage() {
       }),
       set(ref(db, `fugitiveCodes/${fugCode}`), code),
     ]);
+    rememberGame(code, { status: 'waiting' });
     setActiveGameCode(code);
   };
 
-  const startGame = () => update(ref(db, `games/${activeGameCode}`), { status: 'active' });
+  const startGame = async () => {
+    await update(ref(db, `games/${activeGameCode}`), { status: 'active' });
+    rememberGame(activeGameCode, { status: 'active' });
+  };
   const endGame = async (winner) => {
     await update(ref(db, `games/${activeGameCode}`), { status: 'ended', winner: winner || null, endedAt: Date.now() });
+    rememberGame(activeGameCode, { status: 'ended' });
     await push(ref(db, `games/${activeGameCode}/messages/global`), {
       text: winner
         ? `🎯 Game over! ${winner} caught Mister X! Congratulations!`
@@ -258,6 +300,8 @@ export default function AdminPage() {
   const deleteGame = async () => {
     if (!window.confirm(`Delete game ${activeGameCode}? This cannot be undone.`)) return;
     await remove(ref(db, `games/${activeGameCode}`));
+    await deleteGamePhotos(activeGameCode);
+    forgetGame(activeGameCode);
     setActiveGameCode(null);
     setActiveGame(null);
   };
@@ -272,23 +316,34 @@ export default function AdminPage() {
       ]);
       const teamData = teamSnap.val();
       const fugitive = fugitiveSnap.val();
+      const bigTeam = teamData?.bigTeam || teamName;
 
       const submission = teamData?.submissions?.[riddleIndex];
       const isPoem = submission?.type === 'poem';
       const points = isPoem ? 10 : (DIFFICULTY_CONFIG[submission?.difficulty]?.points ?? 10);
       const reduction = isPoem ? 0 : (DIFFICULTY_CONFIG[submission?.difficulty]?.reduction ?? DIFFICULTY_CONFIG.easy.reduction);
-      const currentRadius = isPoem ? STARTING_RADIUS : (teamData?.currentHint?.radius ?? STARTING_RADIUS);
-      const newRadius = isPoem ? STARTING_RADIUS : Math.max(Math.round(currentRadius * (1 - reduction)), 30);
 
       // Photo teams already advanced currentRiddle at submission time; only poems wait for approval.
       const updates = { score: (teamData?.score ?? 0) + points };
       if (isPoem) updates.currentRiddle = riddleIndex + 1;
-      if (fugitive?.lat != null) updates.currentHint = generateHint(fugitive.lat, fugitive.lng, newRadius);
 
       await update(ref(db, `games/${activeGameCode}/teams/${teamName}`), updates);
       await update(ref(db, `games/${activeGameCode}/teams/${teamName}/submissions/${riddleIndex}`), {
         status: 'approved',
       });
+
+      // The zone belongs to the big team, not this device.
+      if (isPoem) {
+        await setBigTeamZoneRadius({ gameCode: activeGameCode, bigTeam, radius: STARTING_RADIUS, fugitive });
+      } else {
+        await shrinkBigTeamZone({
+          gameCode: activeGameCode,
+          bigTeam,
+          baseReduction: reduction,
+          fugitive,
+          updatedBy: teamName,
+        });
+      }
     } finally {
       setApprovingKey(null);
     }
@@ -342,18 +397,20 @@ export default function AdminPage() {
       const fetchJobs = [];
       Object.entries(activeGame.teams ?? {}).forEach(([teamName, teamData]) => {
         Object.entries(teamData.submissions ?? {}).forEach(([idx, sub]) => {
-          if (!sub.photoUrl) return;
+          if (!hasPhoto(sub)) return;
           const folder = zip.folder(teamName);
           const label = `challenge${String(parseInt(idx) + 1).padStart(2, '0')}_${sub.status}`;
           fetchJobs.push(
-            fetch(sub.photoUrl)
+            // Photos may live in Storage (photoUrl) or the database (photoRef).
+            resolvePhoto(sub)
+              .then(url => fetch(url))
               .then(r => r.blob())
               .then(blob => {
                 const ext = blob.type.includes('png') ? 'png' : 'jpg';
                 folder.file(`${label}.${ext}`, blob);
               })
               .catch(() => {
-                folder.file(`${label}_failed.txt`, `Could not fetch: ${sub.photoUrl}`);
+                folder.file(`${label}_failed.txt`, `Could not fetch photo ${label}`);
               })
           );
         });
@@ -377,14 +434,8 @@ export default function AdminPage() {
     const fugSnap = await get(ref(db, `games/${activeGameCode}/fugitive/lastUpdate`));
     const fug = fugSnap.val();
     if (!fug?.lat) { alert('Mister X has no GPS signal yet. Make sure the Mister X page is open and tracking.'); return; }
-    const teamsSnap = await get(ref(db, `games/${activeGameCode}/teams`));
-    const allTeams = teamsSnap.val() ?? {};
-    const updates = {};
-    Object.entries(allTeams).forEach(([tName, tData]) => {
-      const radius = tData.currentHint?.radius ?? STARTING_RADIUS;
-      updates[`${tName}/currentHint`] = generateHint(fug.lat, fug.lng, radius);
-    });
-    await update(ref(db, `games/${activeGameCode}/teams`), updates);
+    const count = await recenterAllZones({ gameCode: activeGameCode, lat: fug.lat, lng: fug.lng });
+    if (count === 0) alert('No team zone exists yet — a zone is created when a challenge is solved.');
   };
 
   const launchPowerUp = async () => {
@@ -458,8 +509,10 @@ export default function AdminPage() {
     setFugAdminAnnouncing(false);
   };
 
-  const overrideGameStatus = (status) =>
-    update(ref(db, `games/${activeGameCode}`), { status });
+  const overrideGameStatus = (status) => {
+    rememberGame(activeGameCode, { status });
+    return update(ref(db, `games/${activeGameCode}`), { status });
+  };
 
   const forceTeamScore = (teamName, score) =>
     update(ref(db, `games/${activeGameCode}/teams/${teamName}`), { score: Math.max(0, parseInt(score, 10) || 0) });
@@ -467,20 +520,13 @@ export default function AdminPage() {
   const forceTeamRiddle = (teamName, riddle) =>
     update(ref(db, `games/${activeGameCode}/teams/${teamName}`), { currentRiddle: Math.max(0, Math.min(RIDDLE_COUNT, parseInt(riddle, 10) || 0)) });
 
+  // The radius is stored per BIG team — correcting one player corrects the whole side.
   const forceTeamRadius = async (teamName, radius) => {
     const r = Math.max(30, Math.min(2000, parseInt(radius, 10) || STARTING_RADIUS));
     const fug = activeGame?.fugitive?.lastUpdate;
-    if (fug?.lat != null) {
-      await update(ref(db, `games/${activeGameCode}/teams/${teamName}`), {
-        currentHint: generateHint(fug.lat, fug.lng, r),
-      });
-    } else {
-      const snap = await get(ref(db, `games/${activeGameCode}/teams/${teamName}/currentHint`));
-      const hint = snap.val();
-      if (hint) {
-        await update(ref(db, `games/${activeGameCode}/teams/${teamName}/currentHint`), { radius: r });
-      }
-    }
+    const bigTeam = activeGame?.teams?.[teamName]?.bigTeam || teamName;
+    const ok = await setBigTeamZoneRadius({ gameCode: activeGameCode, bigTeam, radius: r, fugitive: fug });
+    if (!ok) alert('That team has no zone yet — a zone is created when a challenge is solved.');
   };
 
   const revokeTeamCatch = (teamName) =>
@@ -492,16 +538,7 @@ export default function AdminPage() {
     if (isNaN(lat) || isNaN(lng)) return;
     const timestamp = Date.now();
     await set(ref(db, `games/${activeGameCode}/fugitive/lastUpdate`), { lat, lng, timestamp });
-    const teamsSnap = await get(ref(db, `games/${activeGameCode}/teams`));
-    const allTeams = teamsSnap.val() ?? {};
-    const updates = {};
-    Object.entries(allTeams).forEach(([tName, tData]) => {
-      const radius = tData.currentHint?.radius ?? STARTING_RADIUS;
-      updates[`${tName}/currentHint`] = generateHint(lat, lng, radius);
-    });
-    if (Object.keys(updates).length > 0) {
-      await update(ref(db, `games/${activeGameCode}/teams`), updates);
-    }
+    await recenterAllZones({ gameCode: activeGameCode, lat, lng });
   };
 
   const resetUndercoverCooldown = () =>
@@ -545,7 +582,30 @@ export default function AdminPage() {
       {/* Create or select game */}
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <h2 style={{ fontSize: '1rem' }}>Games</h2>
+        <p className="text-muted" style={{ fontSize: '0.72rem', margin: 0, lineHeight: 1.4 }}>
+          Games are listed on this device only — the database no longer exposes a public
+          game list, so nobody can enumerate live games (and their GPS, chat and photos).
+          Codes created here are remembered automatically; open any other code manually.
+        </p>
         <button className="btn btn-accent" onClick={createGame}>+ New Game</button>
+        <div style={{ display: 'flex', gap: '0.4rem' }}>
+          <input
+            type="text"
+            placeholder="Open existing code…"
+            value={codeInput}
+            onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+            onKeyDown={(e) => e.key === 'Enter' && openExistingGame()}
+            style={{ flex: 1, marginBottom: 0 }}
+          />
+          <button
+            className="btn btn-outline"
+            style={{ width: 'auto', padding: '0.5rem 1rem', flexShrink: 0 }}
+            onClick={openExistingGame}
+            disabled={!codeInput.trim()}
+          >
+            Open
+          </button>
+        </div>
         {Object.entries(games).length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {Object.entries(games).map(([code, g]) => (
@@ -853,8 +913,8 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* Stars */}
-          {activeGame.status === 'active' && (() => {
+          {/* Stars — dormant while STARS_ENABLED is false */}
+          {STARS_ENABLED && activeGame.status === 'active' && (() => {
             const starsData = activeGame.stars ?? {};
             const allBigTeams = [...new Set(teams.map(([, d]) => d.bigTeam).filter(Boolean))];
             return (
@@ -951,8 +1011,8 @@ export default function AdminPage() {
                         <p style={{ fontSize: '0.9rem', fontStyle: 'italic', lineHeight: 1.5 }}>"{sub.text}"</p>
                       </div>
                     ) : (
-                      <HeicSafeImage
-                        src={sub.photoUrl}
+                      <PhotoImage
+                        sub={sub}
                         alt={`${sub.teamName} submission`}
                         style={{ width: '100%', maxHeight: '260px', objectFit: 'cover', display: 'block' }}
                       />
@@ -1141,7 +1201,7 @@ export default function AdminPage() {
               <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{correctionsOpen ? '▲ hide' : '▼ show'}</span>
             </button>
             {!correctionsOpen && (
-              <p className="text-muted" style={{ fontSize: '0.75rem' }}>Emergency fixes — score, challenge progress, GPS, stars, game status.</p>
+              <p className="text-muted" style={{ fontSize: '0.75rem' }}>Emergency fixes — score, challenge progress, GPS, team zone, game status.</p>
             )}
             {correctionsOpen && (() => {
               const cs = { display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid var(--color-border)' };
@@ -1212,6 +1272,11 @@ export default function AdminPage() {
                     <button className="btn btn-outline" style={{ fontSize: '0.85rem' }} onClick={resetUndercoverCooldown}>
                       Reset Undercover Cooldown
                     </button>
+
+                    <p style={{ ...ch, marginTop: '0.25rem' }}><strong>Re-centre team zones</strong> — rebuilds every big team's shared circle around Mr X's current GPS, keeping each radius. No-op if Mr X has no signal or no challenge has been solved yet.</p>
+                    <button className="btn btn-outline" style={{ fontSize: '0.85rem' }} onClick={refreshZoneHints}>
+                      Re-centre All Team Zones
+                    </button>
                   </div>
 
                   {/* TEAM CORRECTIONS */}
@@ -1227,7 +1292,7 @@ export default function AdminPage() {
                           const d = activeGame?.teams?.[t];
                           setCorrScoreInput(String(d?.score ?? 0));
                           setCorrRiddleInput(String(d?.currentRiddle ?? 0));
-                          setCorrRadiusInput(String(d?.currentHint?.radius ?? STARTING_RADIUS));
+                          setCorrRadiusInput(String(activeGame?.zones?.[d?.bigTeam || t]?.radius ?? STARTING_RADIUS));
                         }
                       }}
                       style={{ width: '100%', padding: '0.5rem', borderRadius: 6, background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)', fontSize: '0.875rem' }}
@@ -1280,9 +1345,9 @@ export default function AdminPage() {
                           </div>
                         </div>
 
-                        {/* Hint radius */}
+                        {/* Shared zone radius */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                          <p style={ch}><strong>Hint zone radius</strong> — current: <strong>{corrTeamData.currentHint?.radius ?? STARTING_RADIUS}m</strong>. Smaller = tighter circle around Mr X. Recenters on Mr X's current GPS if available. Min 30m, max 2000m.</p>
+                          <p style={ch}><strong>Team zone radius</strong> — current: <strong>{activeGame?.zones?.[corrTeamData.bigTeam || corrTeam]?.radius ?? STARTING_RADIUS}m</strong>. This circle is shared by all <strong>{countBigTeamMembers(activeGame?.teams, corrTeamData.bigTeam || corrTeam)}</strong> player(s) of <strong>{corrTeamData.bigTeam || corrTeam}</strong>. Smaller = tighter circle around Mr X. Recenters on Mr X's current GPS if available. Min 30m, max 2000m.</p>
                           <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                             <input type="number" value={corrRadiusInput} onChange={e => setCorrRadiusInput(e.target.value)} style={ci} min="30" max="2000" step="50" />
                             <span style={{ alignSelf: 'center', fontSize: '0.8rem', color: 'var(--color-text-muted)', flexShrink: 0 }}>m</span>
@@ -1337,8 +1402,8 @@ export default function AdminPage() {
                     )}
                   </div>
 
-                  {/* STARS */}
-                  {(() => {
+                  {/* STARS — dormant while STARS_ENABLED is false */}
+                  {STARS_ENABLED && (() => {
                     const claimedStars = STARS
                       .map((star, i) => ({ star, i, data: activeGame?.stars?.[i] }))
                       .filter(({ data }) => data?.claimedBy);

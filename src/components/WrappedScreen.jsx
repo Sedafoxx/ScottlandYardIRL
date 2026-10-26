@@ -1,7 +1,24 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase/config';
 import { ref, update } from 'firebase/database';
+import { STARS_ENABLED } from '../data/stars';
+import { hasPhoto, resolvePhoto } from '../utils/photoStore';
 import PhotoDownloadButton from './PhotoDownloadButton';
+
+/** Resolve `photoUrl` (Storage) or `photoRef` (database) into a displayable src. */
+function usePhotoSrc(sub) {
+  const key = sub?.photoRef ?? sub?.photoUrl ?? null;
+  const [loaded, setLoaded] = useState(null); // { key, url }
+  useEffect(() => {
+    if (!key) return;
+    let alive = true;
+    resolvePhoto(sub)
+      .then(url => { if (alive && url) setLoaded({ key, url }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [key, sub?.photoEnc, sub?.gameCode]);
+  return loaded?.key === key ? loaded.url : null;
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -12,7 +29,7 @@ function teamColor(bigTeam) {
   return '#888';
 }
 
-function buildSlides(game) {
+function buildSlides(game, gameCode) {
   const slides = [];
   const teamsArr = Object.entries(game?.teams ?? {});
 
@@ -31,13 +48,17 @@ function buildSlides(game) {
   });
 
   const starsByBig = {};
-  Object.values(game?.stars ?? {}).forEach(s => {
-    if (s.claimedBy) starsByBig[s.claimedBy] = (starsByBig[s.claimedBy] ?? 0) + 1;
-  });
-  const starLeader = Object.entries(starsByBig).sort((a, b) => b[1] - a[1])[0];
+  if (STARS_ENABLED) {
+    Object.values(game?.stars ?? {}).forEach(s => {
+      if (s.claimedBy) starsByBig[s.claimedBy] = (starsByBig[s.claimedBy] ?? 0) + 1;
+    });
+  }
+  const starLeader = STARS_ENABLED
+    ? Object.entries(starsByBig).sort((a, b) => b[1] - a[1])[0]
+    : undefined;
 
   const totalPhotos = teamsArr.reduce((sum, [, d]) =>
-    sum + Object.values(d.submissions ?? {}).filter(s => s.status === 'approved' && s.photoUrl).length, 0);
+    sum + Object.values(d.submissions ?? {}).filter(s => s.status === 'approved' && hasPhoto(s)).length, 0);
 
   const winner = game?.winner ?? null;
   const dateStr = new Date(game?.createdAt ?? Date.now())
@@ -72,8 +93,13 @@ function buildSlides(game) {
   teamsArr.forEach(([, data]) => {
     const label = data.nickname || data.bigTeam || 'Team';
     Object.values(data.submissions ?? {}).forEach(sub => {
-      if (sub.photoUrl && sub.status === 'approved')
-        allPhotos.push({ url: sub.photoUrl, team: label });
+      if (hasPhoto(sub) && sub.status === 'approved')
+        allPhotos.push({
+          url: sub.photoUrl ?? null,
+          photoEnc: sub.photoEnc ?? false,
+          gameCode: sub.gameCode ?? gameCode,
+          team: label,
+        });
     });
   });
   allPhotos.sort(() => Math.random() - 0.5);
@@ -149,10 +175,17 @@ function StatSlide({ emoji, label, value, team }) {
   );
 }
 
-function PhotoSlide({ url, team }) {
+function PhotoThumb({ sub, style, alt, onClick }) {
+  const src = usePhotoSrc({ photoUrl: sub?.url ?? sub?.photoUrl, photoEnc: sub?.photoEnc, gameCode: sub?.gameCode });
+  if (!src) return null;
+  return <img src={src} alt={alt} style={style} onClick={onClick} />;
+}
+
+function PhotoSlide({ url, photoEnc, gameCode, team }) {
+  const src = usePhotoSrc({ photoUrl: url, photoEnc, gameCode });
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
-      <img src={url} alt={team} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      {src && <img src={src} alt={team} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
       <div style={{
         position: 'absolute', bottom: 0, left: 0, right: 0,
         background: 'linear-gradient(transparent, rgba(0,0,0,0.92))',
@@ -204,15 +237,20 @@ function SummaryCard({ game, teamName, bigTeam, nickname, gameCode }) {
   const color = isMrX ? '#e94560' : teamColor(bigTeam);
   const winner = game?.winner ?? null;
   const isCatcher = winner && winner === bigTeam;
-  const myStars = bigTeam
+  const myStars = STARS_ENABLED && bigTeam
     ? Object.values(game?.stars ?? {}).filter(s => s.claimedBy === bigTeam).length
     : 0;
   const dateStr = new Date(game?.createdAt ?? Date.now())
     .toLocaleDateString('de-AT', { day: 'numeric', month: 'long', year: 'numeric' });
 
   const myPhotos = Object.entries(teamData.submissions ?? {})
-    .filter(([, s]) => s.photoUrl && s.status === 'approved')
-    .map(([idx, s]) => ({ idx: parseInt(idx), url: s.photoUrl }));
+    .filter(([, s]) => hasPhoto(s) && s.status === 'approved')
+    .map(([idx, s]) => ({
+      idx: parseInt(idx),
+      url: s.photoUrl ?? null,
+      photoEnc: s.photoEnc ?? false,
+      gameCode: s.gameCode ?? gameCode,
+    }));
 
   const [selectedIdx, setSelectedIdx] = useState(myPhotos[0]?.idx ?? null);
   const [generating, setGenerating] = useState(false);
@@ -226,7 +264,7 @@ function SummaryCard({ game, teamName, bigTeam, nickname, gameCode }) {
     : [
         { emoji: '🎯', label: 'Points', value: teamData.score ?? 0 },
         { emoji: '🧩', label: 'Riddles', value: teamData.currentRiddle ?? 0 },
-        { emoji: '⭐', label: 'Stars', value: myStars },
+        ...(STARS_ENABLED ? [{ emoji: '⭐', label: 'Stars', value: myStars }] : []),
         ...(isCatcher ? [{ emoji: '🏆', label: 'Caught Mister X!', value: '🎯' }] : []),
       ];
 
@@ -308,7 +346,8 @@ function SummaryCard({ game, teamName, bigTeam, nickname, gameCode }) {
       const selectedSub = myPhotos.find(p => p.idx === selectedIdx);
       if (selectedSub) {
         try {
-          const resp = await fetch(selectedSub.url);
+          const thumbSrc = await resolvePhoto(selectedSub);
+          const resp = await fetch(thumbSrc);
           const blob = await resp.blob();
           const blobUrl = URL.createObjectURL(blob);
           const thumb = new Image();
@@ -399,9 +438,9 @@ function SummaryCard({ game, teamName, bigTeam, nickname, gameCode }) {
             <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Highlight photo for your card:</p>
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
               {myPhotos.map(p => (
-                <img
+                <PhotoThumb
                   key={p.idx}
-                  src={p.url}
+                  sub={p}
                   alt={`Challenge ${p.idx + 1}`}
                   onClick={() => setSelectedIdx(p.idx)}
                   style={{
@@ -453,7 +492,7 @@ function SummaryCard({ game, teamName, bigTeam, nickname, gameCode }) {
 // ── WrappedScreen (main export) ───────────────────────────────────────────────
 
 export default function WrappedScreen({ game, teamName, bigTeam, nickname, gameCode }) {
-  const [slides] = useState(() => buildSlides(game));
+  const [slides] = useState(() => buildSlides(game, gameCode));
   const [idx, setIdx] = useState(0);
   const [visible, setVisible] = useState(true);
   const [done, setDone] = useState(false);

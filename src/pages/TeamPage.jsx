@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import heic2any from 'heic2any';
-import { db, storage } from '../firebase/config';
+import { db } from '../firebase/config';
 import { ref, onValue, set, get, update, remove, runTransaction, push } from 'firebase/database';
 import { buildRiddles } from '../utils/riddles';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { savePhoto, hasPhoto } from '../utils/photoStore';
+import { setGpsPref, shouldAutoStartGps, isPermissionDenied } from '../utils/gps';
+import { addItem } from '../utils/items';
+import PhotoImage from '../components/PhotoImage';
+import ItemBag from '../components/PowerUp/ItemBag';
 import RiddleCard from '../components/Riddle/RiddleCard';
 import GameMap from '../components/Map/GameMap';
 import ChatPane from '../components/Chat/ChatPane';
@@ -15,7 +18,8 @@ import LiveFeedCard from '../components/PowerUp/LiveFeedCard';
 import DirectionBeacon from '../components/PowerUp/DirectionBeacon';
 import { TRANSPORT_TYPES, POWER_UP_CONFIG } from '../data/powerUps';
 import { LANDMARKS, LANDMARK_TRIGGER_RADIUS } from '../data/landmarks';
-import { STARS, STAR_COLLECTION_RADIUS, STAR_TRADE_COST, STAR_VOTE_DURATION_MS } from '../data/stars';
+import { STARS, STAR_COLLECTION_RADIUS, STAR_TRADE_COST, STAR_VOTE_DURATION_MS, STARS_ENABLED } from '../data/stars';
+import { resolveZone, countBigTeamMembers } from '../utils/zones';
 import WrappedScreen, { NicknameInput } from '../components/WrappedScreen';
 import PhotoDownloadButton from '../components/PhotoDownloadButton';
 
@@ -30,24 +34,17 @@ function RejectedPhotoCard({ submission, riddleIndex, gameCode, teamName }) {
     update(ref(db, `games/${gameCode}/teams/${teamName}/submissions/${riddleIndex}`), { status: 'skipped' });
 
   const handleFile = async (e) => {
-    let file = e.target.files[0];
+    const file = e.target.files[0];
     if (!file) return;
     setUploading(true);
     setUploadError('');
     try {
-      if (
-        file.type === 'image/heic' || file.type === 'image/heif' ||
-        file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')
-      ) {
-        const blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
-        file = new File([blob instanceof Blob ? blob : blob[0]], 'photo.jpg', { type: 'image/jpeg' });
-      }
-      const path = `photos/${gameCode}/${teamName}/${riddleIndex}_retake_${Date.now()}`;
-      const sRef = storageRef(storage, path);
-      await uploadBytes(sRef, file);
-      const url = await getDownloadURL(sRef);
+      const { photoUrl, photoRef, photoEnc } = await savePhoto({ file, gameCode, teamName, label: `${riddleIndex}-retake` });
       await update(ref(db, `games/${gameCode}/teams/${teamName}/submissions/${riddleIndex}`), {
-        photoUrl: url,
+        photoUrl,
+        photoRef,
+        photoEnc,
+        gameCode,
         status: 'pending',
         submittedAt: Date.now(),
         rejectReason: null,
@@ -68,8 +65,8 @@ function RejectedPhotoCard({ submission, riddleIndex, gameCode, teamName }) {
         <p style={{ fontSize: '0.875rem', marginTop: '0.25rem', lineHeight: 1.5 }}>{submission.rejectReason}</p>
         <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.2rem' }}>−10 points deducted</p>
       </div>
-      <img
-        src={submission.photoUrl}
+      <PhotoImage
+        sub={submission}
         alt="Rejected"
         style={{ width: '100%', borderRadius: '8px', objectFit: 'cover', maxHeight: '180px', opacity: 0.45 }}
       />
@@ -93,7 +90,7 @@ function RejectedPhotoCard({ submission, riddleIndex, gameCode, teamName }) {
   );
 }
 
-function LandmarkChallenge({ landmark, gameCode, teamName, teamScore, onClose }) {
+function LandmarkChallenge({ landmark, gameCode, teamName, bigTeam, teamScore, onClose }) {
   const [answer, setAnswer] = useState('');
   const [status, setStatus] = useState('idle');
   const rewardCfg = POWER_UP_CONFIG[landmark.powerUpReward];
@@ -103,25 +100,12 @@ function LandmarkChallenge({ landmark, gameCode, teamName, teamScore, onClose })
     const correct = [landmark.answer, ...(landmark.altAnswers ?? [])];
     if (!correct.includes(norm)) { setStatus('wrong'); return; }
     setStatus('submitting');
-    const now = Date.now();
-    const updates = {
+    await update(ref(db, `games/${gameCode}/teams/${teamName}`), {
       score: (teamScore ?? 0) + 30,
       [`visitedLandmarks/${landmark.id}`]: true,
-    };
-    switch (landmark.powerUpReward) {
-      case 'live_feed':        updates.liveFeedUntil = now + 2 * 60 * 1000; break;
-      case 'direction_beacon': updates.directionBeaconUntil = now + 2 * 60 * 1000; break;
-      case 'zone_freeze':
-        await update(ref(db, `games/${gameCode}`), { zoneFreezeUntil: now + 3 * 60 * 1000 });
-        break;
-      case 'selfie_demand':
-        await update(ref(db, `games/${gameCode}`), {
-          selfieRequest: { requestedBy: teamName, requestedAt: now, status: 'pending' },
-        });
-        break;
-      default: updates.doubleZone = true;
-    }
-    await update(ref(db, `games/${gameCode}/teams/${teamName}`), updates);
+    });
+    // The reward goes into the team's item bag — the team decides when to use it.
+    await addItem({ gameCode, bigTeam, itemKey: landmark.powerUpReward });
     setStatus('solved');
   };
 
@@ -140,7 +124,10 @@ function LandmarkChallenge({ landmark, gameCode, teamName, teamScore, onClose })
             Landmark unlocked!
           </p>
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', textAlign: 'center' }}>
-            +30 pts · Reward: {rewardCfg?.emoji} {rewardCfg?.label}
+            +30 pts · {rewardCfg?.emoji} {rewardCfg?.label} added to your team's item bag
+          </p>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', textAlign: 'center' }}>
+            Nothing fires automatically — open the bag on your team page and use it when you need it.
           </p>
           <button className="btn btn-accent" style={{ marginTop: '0.5rem' }} onClick={onClose}>Continue</button>
         </>
@@ -203,7 +190,7 @@ function PastChallengeCard({ riddle, submission }) {
           </span>
         </div>
         <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{submission.challenge}</p>
-        <img src={submission.photoUrl} alt="Submitted" style={{ width: '100%', borderRadius: 8, objectFit: 'cover', maxHeight: 220, opacity: approved ? 1 : 0.65 }} />
+        <PhotoImage sub={submission} alt="Submitted" style={{ width: '100%', borderRadius: 8, objectFit: 'cover', maxHeight: 220, opacity: approved ? 1 : 0.65 }} />
       </div>
     );
   }
@@ -287,13 +274,13 @@ export default function TeamPage() {
   const navigate = useNavigate();
   const teamName = searchParams.get('name') || 'Unknown Team';
   const bigTeam = searchParams.get('bigTeam') || teamName;
-  const subteamKey = searchParams.get('subteam') || 'none';
 
   const [game, setGame] = useState(null);
   const [teamData, setTeamData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [gpsEnabled, setGpsEnabled] = useState(false);
+  const [gpsError, setGpsError] = useState('');
   const [teamLocation, setTeamLocation] = useState(null);
   const [chatUnread, setChatUnread] = useState(0);
   const [teamChatUnread, setTeamChatUnread] = useState(0);
@@ -302,6 +289,23 @@ export default function TeamPage() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const gpsWatchRef = useRef(null);
   const teamDataRef = useRef(null);
+  const lastLocRef = useRef(null);
+
+  /**
+   * Landmark challenges. Guarded by a loaded team snapshot so a refresh (where
+   * GPS resumes instantly) cannot re-open a landmark that was already solved.
+   */
+  const checkLandmarks = (lat, lng) => {
+    const data = teamDataRef.current;
+    if (!data) return;
+    const visited = data.visitedLandmarks ?? {};
+    LANDMARKS.forEach(lm => {
+      if (visited[lm.id]) return;
+      if (haversineDistance(lat, lng, lm.lat, lm.lng) <= LANDMARK_TRIGGER_RADIUS) {
+        setActiveLandmark(prev => prev ?? lm);
+      }
+    });
+  };
 
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
@@ -326,25 +330,17 @@ export default function TeamPage() {
     // Only register the team if the game actually exists
     get(gameRef).then(async (snap) => {
       if (!snap.exists()) return;
-      // Ensure riddle set for this subteam key exists (atomic — handles simultaneous joins)
+      // Riddle set is per PLAYER: one device = one player. Nothing is shared
+      // between devices, so two people never solve the same riddles.
       const newRiddles = buildRiddles();
-      await runTransaction(ref(db, `games/${gameCode}/riddleSets/${subteamKey}`), (current) => {
+      await runTransaction(ref(db, `games/${gameCode}/riddleSets/${teamName}`), (current) => {
         if (current === null) return newRiddles;
         return; // already exists — abort write, keep existing
       });
-      // Register this subteam if first device
+      // Register this player on their first visit
       const teamSnap = await get(teamRef);
       if (!teamSnap.exists()) {
-        const gameData = snap.val();
-        let startRiddle = 0;
-        if (gameData?.status === 'active') {
-          const teammateRiddles = Object.entries(gameData?.teams ?? {})
-            .filter(([n, d]) => n !== teamName && d.bigTeam === bigTeam)
-            .map(([, d]) => d.currentRiddle ?? 0);
-          if (teammateRiddles.length > 0)
-            startRiddle = Math.floor(teammateRiddles.reduce((a, b) => a + b, 0) / teammateRiddles.length);
-        }
-        set(teamRef, { score: 0, currentRiddle: startRiddle, bigTeam });
+        set(teamRef, { score: 0, currentRiddle: 0, bigTeam });
       } else {
         update(teamRef, { bigTeam });
       }
@@ -361,14 +357,20 @@ export default function TeamPage() {
     });
 
     const teamUnsub = onValue(teamRef, (snap) => {
-      if (snap.exists()) { setTeamData(snap.val()); teamDataRef.current = snap.val(); }
+      if (snap.exists()) {
+        setTeamData(snap.val());
+        teamDataRef.current = snap.val();
+        // Re-check after the snapshot arrives (covers a GPS fix that landed first).
+        if (lastLocRef.current) checkLandmarks(lastLocRef.current.lat, lastLocRef.current.lng);
+      }
     });
 
     return () => { unsub(); teamUnsub(); };
   }, [gameCode, teamName]);
 
-  // Star listeners
+  // Star listeners — dormant while STARS_ENABLED is false
   useEffect(() => {
+    if (!STARS_ENABLED) return;
     const unsub = onValue(ref(db, `games/${gameCode}/stars`), (snap) => {
       const val = snap.val() ?? {};
       setStars(val);
@@ -378,6 +380,7 @@ export default function TeamPage() {
   }, [gameCode]);
 
   useEffect(() => {
+    if (!STARS_ENABLED) return;
     const unsub = onValue(ref(db, `games/${gameCode}/starTrades`), (snap) => {
       setStarTrades(snap.val() ?? {});
     });
@@ -385,6 +388,7 @@ export default function TeamPage() {
   }, [gameCode]);
 
   useEffect(() => {
+    if (!STARS_ENABLED) return;
     const unsub = onValue(ref(db, `games/${gameCode}/starVotes/${bigTeam}`), (snap) => {
       setStarVote(snap.val());
     });
@@ -393,6 +397,7 @@ export default function TeamPage() {
 
   // Detect newly claimed stars → popup
   useEffect(() => {
+    if (!STARS_ENABLED) return;
     Object.entries(stars).forEach(([idx, star]) => {
       if (star.claimedBy && !prevStarsRef.current[idx]?.claimedBy) {
         if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
@@ -405,6 +410,7 @@ export default function TeamPage() {
 
   // Vote timer auto-resolve
   useEffect(() => {
+    if (!STARS_ENABLED) return;
     if (!starVote?.active) {
       if (voteTimerRef.current) clearTimeout(voteTimerRef.current);
       return;
@@ -417,6 +423,7 @@ export default function TeamPage() {
 
   // Star GPS proximity check
   useEffect(() => {
+    if (!STARS_ENABLED) return;
     if (!teamLocation || !gpsEnabled) return;
     const { lat, lng } = teamLocation;
     STARS.forEach((star, i) => {
@@ -478,12 +485,9 @@ export default function TeamPage() {
       await runTransaction(ref(db, `games/${gameCode}/starTrades/${bigTeam}`), (c) => (c ?? 0) + 1);
       const snap = await get(ref(db, `games/${gameCode}/teams`));
       const allTeams = snap.val() ?? {};
-      // Adaptive duration: 5–10 min based on avg zone radius of this big team.
+      // Adaptive duration: 5–10 min based on the shared zone radius of this big team.
       // Smaller radius = already close = shorter beacon. Larger = lost = longer.
-      const bigTeamEntries = Object.values(allTeams).filter(d => (d.bigTeam || '') === bigTeam || false);
-      const avgRadius = bigTeamEntries.length > 0
-        ? bigTeamEntries.reduce((s, d) => s + (d.currentHint?.radius ?? 2000), 0) / bigTeamEntries.length
-        : 2000;
+      const avgRadius = game?.zones?.[bigTeam]?.radius ?? 2000;
       const beaconMs = Math.round((5 + 5 * Math.min(1, avgRadius / 2000)) * 60 * 1000);
       const until = Date.now() + beaconMs;
       const beaconMinutes = Math.round(beaconMs / 60000);
@@ -500,36 +504,54 @@ export default function TeamPage() {
     }
   };
 
-  const toggleGPS = () => {
-    if (gpsEnabled) {
-      if (gpsWatchRef.current != null) navigator.geolocation.clearWatch(gpsWatchRef.current);
-      gpsWatchRef.current = null;
-      setGpsEnabled(false);
-      setTeamLocation(null);
-      remove(ref(db, `games/${gameCode}/teams/${teamName}/location`));
-    } else {
-      if (!navigator.geolocation) return;
-      setGpsEnabled(true);
-      gpsWatchRef.current = navigator.geolocation.watchPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          const loc = { lat, lng, timestamp: Date.now() };
-          setTeamLocation(loc);
-          update(ref(db, `games/${gameCode}/teams/${teamName}`), { location: loc });
-          const visited = teamDataRef.current?.visitedLandmarks ?? {};
-          LANDMARKS.forEach(lm => {
-            if (visited[lm.id]) return;
-            if (haversineDistance(lat, lng, lm.lat, lm.lng) <= LANDMARK_TRIGGER_RADIUS) {
-              setActiveLandmark(prev => prev ?? lm);
-            }
-          });
-        },
-        err => console.error('Team GPS:', err),
-        { enableHighAccuracy: true }
-      );
-    }
+  const startGps = () => {
+    if (!navigator.geolocation) { setGpsError('Geolocation is not supported on this device.'); return; }
+    if (gpsWatchRef.current != null) return; // already tracking
+    setGpsEnabled(true);
+    setGpsPref(true);
+    gpsWatchRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const loc = { lat, lng, timestamp: Date.now() };
+        setTeamLocation(loc);
+        setGpsError('');
+        lastLocRef.current = loc;
+        update(ref(db, `games/${gameCode}/teams/${teamName}`), { location: loc });
+        checkLandmarks(lat, lng);
+      },
+      (err) => {
+        console.error('Team GPS:', err);
+        if (isPermissionDenied(err)) {
+          setGpsPref(false);
+          setGpsEnabled(false);
+          setGpsError('Location permission is off. Allow it in your browser, then tap Enable GPS.');
+        } else {
+          setGpsError('GPS signal weak — still trying…');
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 }
+    );
   };
+
+  const stopGps = () => {
+    if (gpsWatchRef.current != null) navigator.geolocation.clearWatch(gpsWatchRef.current);
+    gpsWatchRef.current = null;
+    setGpsEnabled(false);
+    setGpsPref(false);
+    setTeamLocation(null);
+    remove(ref(db, `games/${gameCode}/teams/${teamName}/location`));
+  };
+
+  const toggleGPS = () => (gpsEnabled ? stopGps() : startGps());
+
+  // The browser remembers the permission per site; this page used to forget the
+  // subscription on every refresh and silently stopped tracking. Resume by itself.
+  useEffect(() => {
+    let cancelled = false;
+    shouldAutoStartGps().then((auto) => { if (auto && !cancelled) startGps(); });
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return () => { if (gpsWatchRef.current != null) navigator.geolocation.clearWatch(gpsWatchRef.current); };
@@ -555,13 +577,19 @@ export default function TeamPage() {
     );
   }
 
-  const riddles = game?.riddleSets?.[subteamKey] ? Object.values(game.riddleSets[subteamKey]) : [];
+  const riddles = game?.riddleSets?.[teamName] ? Object.values(game.riddleSets[teamName]) : [];
   const currentRiddleIndex = teamData?.currentRiddle ?? 0;
   const currentRiddle = riddles[currentRiddleIndex];
-  const currentHint = teamData?.currentHint ?? null;
+  // One shared zone circle for the whole big team.
+  const currentHint = resolveZone(game, bigTeam, teamData);
+  const teamSize = countBigTeamMembers(game?.teams, bigTeam);
   const leaderboardTeams = game?.teams ? Object.entries(game.teams) : [];
   const liveFeedActive = (teamData?.liveFeedUntil ?? 0) > Date.now();
   const fugitiveUndercover = (game?.fugitive?.undercover?.until ?? 0) > Date.now();
+  const selfieReq = game?.selfieRequest ?? null;
+  const selfieIsMine = !!selfieReq && (selfieReq.requestedByBigTeam
+    ? selfieReq.requestedByBigTeam === bigTeam
+    : selfieReq.requestedBy === teamName);
   const allTeamLocations = game?.teams
     ? Object.entries(game.teams)
         .filter(([n, d]) => n !== teamName && d.location && (d.bigTeam === bigTeam || n === bigTeam || n.startsWith(bigTeam + ' ')))
@@ -603,10 +631,13 @@ export default function TeamPage() {
             <p><strong style={{ color: 'var(--color-primary)' }}>Hard challenge:</strong> −15% zone radius · +30 pts</p>
             <p><strong>Photo rejection:</strong> −10 pts — retake or skip.</p>
             <p><strong style={{ color: 'var(--color-accent)' }}>Zone starts</strong> at 2000m radius after your first challenge.</p>
+            <p><strong style={{ color: 'var(--color-hunter)' }}>One shared circle:</strong> everyone on your side ({teamSize} player{teamSize !== 1 ? 's' : ''}) sees the exact same zone. Each solved challenge shrinks it by the challenge percentage divided by your team size, so you all hunt the same spot.</p>
             <p><strong>Power-ups:</strong> solve competitive mini-challenges for special abilities.</p>
             <p><strong>Landmarks:</strong> stand within 15m of a Vienna landmark · answer the riddle · +30 pts + power-up reward.</p>
             <p><strong>Enable GPS</strong> to see yourself on the map and unlock landmark bonuses.</p>
-            <p><strong style={{ color: '#f1c40f' }}>⭐ Stars:</strong> Mister X releases clues pointing to hidden stars around Vienna. Walk within ~20m of the star location to collect it automatically. Your whole team competes against the other team for each star. Collect 3 stars to vote on trading them for a Direction Beacon — a 2-minute compass pointing at Mister X.</p>
+            {STARS_ENABLED && (
+              <p><strong style={{ color: '#f1c40f' }}>⭐ Stars:</strong> Mister X releases clues pointing to hidden stars around Vienna. Walk within ~20m of the star location to collect it automatically. Your whole team competes against the other team for each star. Collect 3 stars to vote on trading them for a Direction Beacon — a 2-minute compass pointing at Mister X.</p>
+            )}
           </div>
         )}
       </div>
@@ -633,6 +664,8 @@ export default function TeamPage() {
           riddle={currentRiddle}
           gameCode={gameCode}
           teamName={teamName}
+          bigTeam={bigTeam}
+          teamSize={teamSize}
           riddleIndex={currentRiddleIndex}
           totalRiddles={riddles.length}
           doubleZone={teamData?.doubleZone === true}
@@ -647,8 +680,8 @@ export default function TeamPage() {
         </div>
       )}
 
-      {/* Star clue section */}
-      {(() => {
+      {/* Star clue section — dormant while STARS_ENABLED is false */}
+      {STARS_ENABLED && (() => {
         const releasedStars = STARS.filter((_, i) => stars[i]?.released);
         if (releasedStars.length === 0) return null;
         const myStarCount = Object.values(stars).filter(s => s.claimedBy === bigTeam).length;
@@ -656,10 +689,7 @@ export default function TeamPage() {
         const starsAvailable = myStarCount - tradesUsed * 3;
         const canTrade = starsAvailable >= STAR_TRADE_COST && tradesUsed === 0;
         // Compute expected beacon duration for display (same formula as resolveVote)
-        const bigTeamMembers = Object.values(game?.teams ?? {}).filter(d => (d.bigTeam || '') === bigTeam);
-        const avgRadius = bigTeamMembers.length > 0
-          ? bigTeamMembers.reduce((s, d) => s + (d.currentHint?.radius ?? 2000), 0) / bigTeamMembers.length
-          : 2000;
+        const avgRadius = game?.zones?.[bigTeam]?.radius ?? 2000;
         const expectedBeaconMin = Math.round((5 + 5 * Math.min(1, avgRadius / 2000)));
         const voteActive = starVote?.active && (now - (starVote?.startedAt ?? 0)) < STAR_VOTE_DURATION_MS;
         const myVote = starVote?.votes?.[teamName];
@@ -817,10 +847,10 @@ export default function TeamPage() {
         }}>
           <div>
             <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--color-accent)' }}>
-              Zone hint active
+              {bigTeam} zone active
             </p>
             <p className="text-muted" style={{ fontSize: '0.75rem' }}>
-              {currentHint.radius}m radius — open map to see
+              {currentHint.radius}m radius · shared by all {teamSize} player{teamSize !== 1 ? 's' : ''} — open map to see
             </p>
           </div>
           <button
@@ -835,7 +865,22 @@ export default function TeamPage() {
         </div>
       )}
 
-      <Leaderboard teams={leaderboardTeams} currentTeam={teamName} stars={stars} starTrades={starTrades} />
+      {game?.status === 'active' && (
+        <ItemBag
+          gameCode={gameCode}
+          bigTeam={bigTeam}
+          teamName={teamName}
+          items={game?.teamItems?.[bigTeam] ?? {}}
+          teams={game?.teams ?? {}}
+        />
+      )}
+
+      <Leaderboard
+        teams={leaderboardTeams}
+        currentTeam={teamName}
+        stars={STARS_ENABLED ? stars : undefined}
+        starTrades={STARS_ENABLED ? starTrades : undefined}
+      />
 
       <ChatPane
         gameCode={gameCode}
@@ -866,7 +911,11 @@ export default function TeamPage() {
         <LiveFeedCard until={teamData.liveFeedUntil} gameCode={gameCode} teamName={teamName} />
       )}
       {teamData?.directionBeaconUntil > Date.now() && (
-        <DirectionBeacon gameCode={gameCode} until={teamData.directionBeaconUntil} />
+        <DirectionBeacon
+          gameCode={gameCode}
+          until={teamData.directionBeaconUntil}
+          teamLocation={teamLocation}
+        />
       )}
       {teamData?.doubleZone && (
         <div className="card" style={{ borderLeft: '4px solid #f39c12' }}>
@@ -880,21 +929,21 @@ export default function TeamPage() {
         <ZoneFreezeBar until={game.zoneFreezeUntil} />
       )}
 
-      {/* Received selfie */}
-      {game?.selfieRequest?.requestedBy === teamName && game.selfieRequest.status === 'fulfilled' && (
+      {/* Received selfie — visible to the whole big team that demanded it */}
+      {selfieIsMine && selfieReq.status === 'fulfilled' && hasPhoto(selfieReq) && (
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderLeft: '4px solid #1abc9c' }}>
           <p style={{ fontWeight: 700, color: '#1abc9c' }}>📸 Mister X Selfie Received!</p>
-          <img
-            src={game.selfieRequest.photoUrl}
+          <PhotoImage
+            sub={selfieReq}
             alt="Mister X selfie"
             style={{ width: '100%', borderRadius: 8, objectFit: 'cover', maxHeight: 280 }}
           />
           <p className="text-muted" style={{ fontSize: '0.75rem' }}>
-            Sent at {new Date(game.selfieRequest.fulfilledAt).toLocaleTimeString()}
+            Requested by {selfieReq.requestedBy} · sent at {new Date(selfieReq.fulfilledAt).toLocaleTimeString()}
           </p>
         </div>
       )}
-      {game?.selfieRequest?.requestedBy === teamName && game.selfieRequest.status === 'pending' && (
+      {selfieIsMine && selfieReq.status === 'pending' && (
         <div className="card" style={{ borderLeft: '4px solid #1abc9c' }}>
           <p style={{ fontWeight: 700, color: '#1abc9c' }}>📸 Selfie requested — waiting for Mister X…</p>
         </div>
@@ -922,6 +971,14 @@ export default function TeamPage() {
           {gpsEnabled ? '📍 GPS On' : '📍 Enable GPS'}
         </button>
       </div>
+      {gpsError && (
+        <p style={{ color: 'var(--color-primary)', fontSize: '0.8rem', margin: '-0.4rem 0 0' }}>{gpsError}</p>
+      )}
+      {gpsEnabled && (
+        <p className="text-muted" style={{ fontSize: '0.7rem', margin: '-0.5rem 0 0' }}>
+          GPS stays on after a refresh — no need to tap again.
+        </p>
+      )}
 
       {/* Full-screen overlays */}
       {activeLandmark && (
@@ -929,6 +986,7 @@ export default function TeamPage() {
           landmark={activeLandmark}
           gameCode={gameCode}
           teamName={teamName}
+          bigTeam={bigTeam}
           teamScore={teamData?.score}
           onClose={() => setActiveLandmark(null)}
         />
@@ -940,11 +998,12 @@ export default function TeamPage() {
         powerUp={game?.powerUp}
         gameCode={gameCode}
         teamName={teamName}
+        bigTeam={bigTeam}
         teams={Object.keys(game?.teams ?? {})}
       />
 
-      {/* Star claimed popup */}
-      {starClaimedPopup && (
+      {/* Star claimed popup — dormant while STARS_ENABLED is false */}
+      {STARS_ENABLED && starClaimedPopup && (
         <div
           style={{
             position: 'fixed', inset: 0, zIndex: 800,
@@ -987,21 +1046,14 @@ export default function TeamPage() {
                   : liveFeedActive
                     ? '📡 Live Feed — Mister X visible!'
                     : currentHint
-                      ? `Zone hint — ${currentHint.radius}m radius`
-                      : 'No hint yet'}
+                      ? `${bigTeam} zone — ${currentHint.radius}m radius (shared)`
+                      : 'No zone yet — solve a challenge'}
               </p>
               {allTeamLocations.length > 0 && (
                 <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.1rem' }}>
-                  ● {allTeamLocations.length} player{allTeamLocations.length !== 1 ? 's' : ''} on map
+                  ● {allTeamLocations.length} team-mate{allTeamLocations.length !== 1 ? 's' : ''} on map
                 </p>
               )}
-              {/* DEBUG — remove before release */}
-              <p style={{ fontSize: '0.6rem', color: '#aaa', marginTop: '0.2rem', fontFamily: 'monospace' }}>
-                gps:{teamLocation ? '✓' : '✗'}
-                {' '}hint:{currentHint ? `✓(${currentHint.radius}m)` : '✗'}
-                {' '}others:{allTeamLocations.length}
-                {' '}bigTeam:{bigTeam}
-              </p>
             </div>
             <button
               className="btn btn-outline"

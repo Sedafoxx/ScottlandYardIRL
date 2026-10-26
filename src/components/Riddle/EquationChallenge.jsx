@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { db } from '../../firebase/config';
 import { ref, update, get } from 'firebase/database';
-import { generateHint, DIFFICULTY_CONFIG, STARTING_RADIUS } from '../../utils/hints';
+import { DIFFICULTY_CONFIG } from '../../utils/hints';
+import { shrinkBigTeamZone } from '../../utils/zones';
 
 const OPERATORS = new Set(['+', '-', '×', '÷']);
 
@@ -71,7 +72,7 @@ function Tile({ item, onClick, disabled }) {
   );
 }
 
-function DifficultyPicker({ options, onSelect, doubleZone }) {
+function DifficultyPicker({ options, onSelect, doubleZone, teamSize = 1 }) {
   const descriptions = {
     easy: '2 operations',
     medium: '3 operations',
@@ -81,13 +82,14 @@ function DifficultyPicker({ options, onSelect, doubleZone }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
       <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
         Arrange tiles to form a valid equation. Choose your difficulty.
+        {teamSize > 1 && ` The circle is shared by all ${teamSize} players on your team, so each solve shrinks it by your share.`}
         {doubleZone && <strong style={{ color: '#f39c12' }}> ⚡ Double Zone active!</strong>}
       </p>
       {['easy', 'medium', 'hard'].map((diff) => {
         const c = DIFFICULTY_CONFIG[diff];
         const opt = options[diff];
         const r = DIFFICULTY_CONFIG[diff].reduction;
-        const displayReduction = doubleZone ? Math.min(r * 2, 0.9) * 100 : r * 100;
+        const displayReduction = ((doubleZone ? Math.min(r * 2, 0.9) : r) / Math.max(1, teamSize) * 100).toFixed(1);
         return (
           <button
             key={diff}
@@ -125,7 +127,7 @@ function DifficultyPicker({ options, onSelect, doubleZone }) {
   );
 }
 
-export default function EquationChallenge({ puzzle, gameCode, teamName, riddleIndex, doubleZone, zoneFreezeUntil }) {
+export default function EquationChallenge({ puzzle, gameCode, teamName, bigTeam, teamSize = 1, riddleIndex, doubleZone, zoneFreezeUntil }) {
   const [chosenDiff, setChosenDiff] = useState(null);
   const [placed, setPlaced] = useState([]);
   const [available, setAvailable] = useState([]);
@@ -134,7 +136,7 @@ export default function EquationChallenge({ puzzle, gameCode, teamName, riddleIn
   const [saving, setSaving] = useState(false);
 
   if (!chosenDiff) {
-    return <DifficultyPicker options={puzzle.options} doubleZone={doubleZone} onSelect={(diff) => {
+    return <DifficultyPicker options={puzzle.options} doubleZone={doubleZone} teamSize={teamSize} onSelect={(diff) => {
       setChosenDiff(diff);
       setPlaced([]);
       setAvailable(
@@ -147,7 +149,7 @@ export default function EquationChallenge({ puzzle, gameCode, teamName, riddleIn
 
   const activePuzzle = puzzle.options[chosenDiff];
   const cfg = DIFFICULTY_CONFIG[chosenDiff];
-  const effectiveReduction = doubleZone ? Math.min(DIFFICULTY_CONFIG[chosenDiff].reduction * 2, 0.9) : DIFFICULTY_CONFIG[chosenDiff].reduction;
+  const effectiveReduction = (doubleZone ? Math.min(DIFFICULTY_CONFIG[chosenDiff].reduction * 2, 0.9) : DIFFICULTY_CONFIG[chosenDiff].reduction) / Math.max(1, teamSize);
 
   const addTile = (item) => {
     if (won) return;
@@ -186,18 +188,23 @@ export default function EquationChallenge({ puzzle, gameCode, teamName, riddleIn
       const [teamSnap, fugSnap] = await Promise.all([get(teamRef), get(fugRef)]);
       const td = teamSnap.val();
       const fug = fugSnap.val();
-      const curRadius = td?.currentHint?.radius ?? STARTING_RADIUS;
-      const isZoneFrozen = (zoneFreezeUntil ?? 0) > Date.now();
       const hasDoubleZone = td?.doubleZone === true;
-      const effectiveReduction = hasDoubleZone ? Math.min(DIFFICULTY_CONFIG[chosenDiff].reduction * 2, 0.9) : DIFFICULTY_CONFIG[chosenDiff].reduction;
-      const newRadius = Math.max(Math.round(curRadius * (1 - effectiveReduction)), 30);
       const updates = {
         currentRiddle: riddleIndex + 1,
         score: (td?.score ?? 0) + activePuzzle.points,
       };
-      if (!isZoneFrozen && fug?.lat != null) updates.currentHint = generateHint(fug.lat, fug.lng, newRadius);
       if (hasDoubleZone) updates.doubleZone = null;
       await update(teamRef, updates);
+      // One shared circle per big team — this player only shrinks it by their share.
+      await shrinkBigTeamZone({
+        gameCode,
+        bigTeam,
+        baseReduction: DIFFICULTY_CONFIG[chosenDiff].reduction,
+        doubleZone: hasDoubleZone,
+        freezeUntil: zoneFreezeUntil,
+        fugitive: fug,
+        updatedBy: teamName,
+      });
     } catch (e) {
       console.error(e);
     } finally {

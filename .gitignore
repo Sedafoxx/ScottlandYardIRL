@@ -7,6 +7,18 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Test artefacts / screenshots
+/*.png
+/verify-screenshots/
+
+# Firebase CLI cache, Vercel link, local editor agent settings
+/.firebase/
+/.vercel/
+.claude/settings.local.json
+
+# Separate Remotion side-project (not part of the game bundle)
+/aftermovie/
+
 node_modules
 dist
 dist-ssr
