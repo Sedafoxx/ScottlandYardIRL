@@ -24,6 +24,27 @@ Routes:
 | `/fugitive/:gameCode` | Mister X phone |
 | `/admin` | Game Master (`sessionStorage` password gate) |
 
+## Game Master access
+
+`/admin` now requires **username + password** ([`gmAuth.js`](src/utils/gmAuth.js:1)), not a shared
+password. Sessions live in `sessionStorage` (per tab) with a visible **Sign out** button.
+
+| Username | Owner |
+|---|---|
+| `dimitriburyak` | Dimitri Buryak |
+| `evasteinmetz` | Eva Steinmetz |
+
+Credentials are stored as SHA-256 hashes (`username:password:syirl-gm-v1`) — add a GM by adding
+one hash entry. Each GM gets **their own game list** (`sy_admin_games:<username>` in
+`localStorage`); games created from the dashboard also record `gm` in the database, so a code
+opened on another device/account shows whose game it is. The old single-password list is
+migrated into the first account that signs in.
+
+> This is a client-side gate: it keeps players out of the dashboard and separates GM game
+> lists, but the database can only see *an anonymous signed-in device*. Real per-GM
+> authorisation would need Firebase Auth with the Email/Password provider plus a custom
+> `gm` claim — the anonymous-only setup cannot express it.
+
 ## How the game model works
 
 - **Big team** = a side ("Red", "Blue"). **Player** = one device (`Red 1`, `Red 2` …).

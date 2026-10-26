@@ -18,6 +18,13 @@ import {
 import ChatPane from '../components/Chat/ChatPane';
 import PhotoImage from '../components/PhotoImage';
 import { hasPhoto, resolvePhoto, deleteGamePhotos } from '../utils/photoStore';
+import {
+  readGmSession,
+  signInGm,
+  signOutGm,
+  gamesStorageKey,
+  migrateLegacyGameList,
+} from '../utils/gmAuth';
 
 const TRANSPORT_MAP = Object.fromEntries(TRANSPORT_TYPES.map(t => [t.key, t]));
 
@@ -29,15 +36,13 @@ function generateCode(length = 6) {
   return out.slice(0, length).toUpperCase();
 }
 
-const KNOWN_GAMES_KEY = 'sy_admin_games';
-
-const ADMIN_PASSWORD = 'scottlandyardirl';
-
 export default function AdminPage() {
   const navigate = useNavigate();
-  const [authed, setAuthed] = useState(() => sessionStorage.getItem('adminAuthed') === '1');
+  const gm = readGmSession();
+  const [userInput, setUserInput] = useState('');
   const [pwInput, setPwInput] = useState('');
-  const [pwError, setPwError] = useState(false);
+  const [loginError, setLoginError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
   const [games, setGames] = useState({});
   const [codeInput, setCodeInput] = useState('');
   const [activeGameCode, setActiveGameCode] = useState(null);
@@ -171,41 +176,75 @@ export default function AdminPage() {
     return () => unsub();
   }, [activeGameCode]);
 
-  const submitPassword = () => {
-    if (pwInput === ADMIN_PASSWORD) {
-      sessionStorage.setItem('adminAuthed', '1');
+  const submitLogin = async () => {
+    if (loggingIn) return;
+    setLoggingIn(true);
+    setLoginError('');
+    const result = await signInGm(userInput, pwInput);
+    if (result.ok) {
+      // Reload so every hook below mounts with a stable GM session.
       window.location.reload();
-    } else {
-      setPwError(true);
-      setPwInput('');
-      setTimeout(() => setPwError(false), 1500);
+      return;
     }
+    setLoggingIn(false);
+    setLoginError(result.error);
+    setPwInput('');
   };
 
-  if (!authed) {
+  if (!gm) {
     return (
       <div className="page" style={{ justifyContent: 'center', gap: '1.5rem' }}>
         <div style={{ textAlign: 'center' }}>
           <h1 style={{ color: 'var(--color-admin)', fontWeight: 800 }}>Game Master</h1>
-          <p className="text-muted" style={{ marginTop: '0.25rem' }}>Enter the admin password to continue</p>
+          <p className="text-muted" style={{ marginTop: '0.25rem' }}>Sign in to manage your games</p>
         </div>
         <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <input
-            type="password"
-            placeholder="Password"
-            value={pwInput}
-            onChange={(e) => setPwInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
-            style={{ borderColor: pwError ? 'var(--color-primary)' : undefined }}
+            type="text"
+            placeholder="Username"
+            data-testid="gm-username"
+            value={userInput}
+            onChange={(e) => { setUserInput(e.target.value); setLoginError(''); }}
+            onKeyDown={(e) => e.key === 'Enter' && submitLogin()}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             autoFocus
           />
-          {pwError && <p style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>Wrong password.</p>}
-          <button className="btn btn-accent" onClick={submitPassword}>Enter</button>
+          <input
+            type="password"
+            placeholder="Password"
+            data-testid="gm-password"
+            value={pwInput}
+            onChange={(e) => { setPwInput(e.target.value); setLoginError(''); }}
+            onKeyDown={(e) => e.key === 'Enter' && submitLogin()}
+            style={{ borderColor: loginError ? 'var(--color-primary)' : undefined }}
+          />
+          {loginError && (
+            <p data-testid="gm-login-error" style={{ color: 'var(--color-primary)', fontSize: '0.875rem' }}>
+              {loginError}
+            </p>
+          )}
+          <button
+            className="btn btn-accent"
+            data-testid="gm-login"
+            onClick={submitLogin}
+            disabled={loggingIn || !userInput.trim() || !pwInput}
+          >
+            {loggingIn ? 'Signing in…' : 'Sign in'}
+          </button>
           <button className="btn btn-outline" onClick={() => navigate('/')}>Back</button>
         </div>
       </div>
     );
-  } // tracks in-flight approval
+  }
+
+  const knownGamesKey = gamesStorageKey(gm.username);
+
+  const signOut = () => {
+    signOutGm();
+    window.location.reload();
+  };
 
   /**
    * The games list is kept on THIS device instead of being world-readable in the
@@ -216,7 +255,7 @@ export default function AdminPage() {
   const rememberGame = (code, patch = {}) => {
     setGames((prev) => {
       const next = { ...prev, [code]: { ...(prev[code] ?? {}), ...patch } };
-      try { localStorage.setItem(KNOWN_GAMES_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+      try { localStorage.setItem(knownGamesKey, JSON.stringify(next)); } catch { /* private mode */ }
       return next;
     });
   };
@@ -225,14 +264,23 @@ export default function AdminPage() {
     setGames((prev) => {
       const next = { ...prev };
       delete next[code];
-      try { localStorage.setItem(KNOWN_GAMES_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+      try { localStorage.setItem(knownGamesKey, JSON.stringify(next)); } catch { /* private mode */ }
       return next;
     });
   };
 
   useEffect(() => {
     let stored = {};
-    try { stored = JSON.parse(localStorage.getItem(KNOWN_GAMES_KEY) ?? '{}'); } catch { stored = {}; }
+    const legacy = migrateLegacyGameList(gm.username);
+    try {
+      stored = JSON.parse(localStorage.getItem(knownGamesKey) ?? '{}');
+    } catch {
+      stored = {};
+    }
+    if (Object.keys(stored).length === 0 && legacy && Object.keys(legacy).length > 0) {
+      stored = legacy;
+      try { localStorage.setItem(knownGamesKey, JSON.stringify(stored)); } catch { /* private mode */ }
+    }
     setGames(stored);
     // Refresh the status of every remembered game — read is scoped by code.
     Object.keys(stored).forEach((code) => {
@@ -273,10 +321,11 @@ export default function AdminPage() {
         status: 'waiting',
         createdAt: Date.now(),
         fugitiveCode: fugCode,
+        gm: gm.username,
       }),
       set(ref(db, `fugitiveCodes/${fugCode}`), code),
     ]);
-    rememberGame(code, { status: 'waiting' });
+    rememberGame(code, { status: 'waiting', gm: gm.username });
     setActiveGameCode(code);
   };
 
@@ -572,20 +621,37 @@ export default function AdminPage() {
 
   return (
     <div className="page" style={{ gap: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1 style={{ color: 'var(--color-admin)', fontWeight: 800 }}>Game Master</h1>
-        <button className="btn btn-outline" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={() => navigate('/')}>
-          Home
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+        <div>
+          <h1 style={{ color: 'var(--color-admin)', fontWeight: 800 }}>Game Master</h1>
+          <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.15rem' }}>
+            Signed in as <strong style={{ color: 'var(--color-admin)' }}>{gm.name}</strong>
+            <span style={{ opacity: 0.6 }}> · {gm.username}</span>
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+          <button className="btn btn-outline" style={{ width: 'auto', padding: '0.5rem 1rem' }} onClick={() => navigate('/')}>
+            Home
+          </button>
+          <button
+            className="btn btn-outline"
+            style={{ width: 'auto', padding: '0.5rem 1rem' }}
+            onClick={signOut}
+            data-testid="gm-signout"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
 
       {/* Create or select game */}
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <h2 style={{ fontSize: '1rem' }}>Games</h2>
         <p className="text-muted" style={{ fontSize: '0.72rem', margin: 0, lineHeight: 1.4 }}>
-          Games are listed on this device only — the database no longer exposes a public
-          game list, so nobody can enumerate live games (and their GPS, chat and photos).
-          Codes created here are remembered automatically; open any other code manually.
+          {`Your games (${gm.name.split(' ')[0]}'s list) live on this device only — the database
+          no longer exposes a public game list, so nobody can enumerate live games and their
+          GPS, chat and photos. Codes you create are remembered automatically; open any other
+          code manually.`}
         </p>
         <button className="btn btn-accent" onClick={createGame}>+ New Game</button>
         <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -616,6 +682,7 @@ export default function AdminPage() {
                 onClick={() => setActiveGameCode(code)}
               >
                 {code} — {g.status}
+                {g.gm && g.gm !== gm.username ? ` · ${g.gm}` : ''}
               </button>
             ))}
           </div>

@@ -347,12 +347,25 @@ try {
   // device now, so seed it the way the dashboard would after creating the game.
   const admin = await device({ latitude: 48.2, longitude: 16.37 });
   await admin.page.addInitScript(({ code }) => {
-    try { localStorage.setItem('sy_admin_games', JSON.stringify({ [code]: { status: 'active' } })); } catch { /* ignore */ }
+    try {
+      localStorage.setItem(`sy_admin_games:dimitriburyak`, JSON.stringify({ [code]: { status: 'active', gm: 'dimitriburyak' } }));
+    } catch { /* ignore */ }
   }, { code: GAME });
   await admin.page.goto(url('/admin'), { waitUntil: 'domcontentloaded' });
-  await admin.page.locator('input').first().fill('scottlandyardirl');
-  await admin.page.keyboard.press('Enter');
+
+  // The app renders only after the anonymous sign-in resolves.
+  await admin.page.getByTestId('gm-username').waitFor({ timeout: 30000 }).catch(() => {});
+  check('GM login asks for username and password',
+    (await admin.page.getByTestId('gm-username').count()) === 1 && (await admin.page.getByTestId('gm-password').count()) === 1);
+  await admin.page.getByTestId('gm-username').fill('dimitriburyak');
+  await admin.page.getByTestId('gm-password').fill('wrong-password');
+  await admin.page.getByTestId('gm-login').click();
+  check('wrong GM password is rejected', await hasText(admin.page, 'Wrong username or password', 15000));
+
+  await admin.page.getByTestId('gm-password').fill('scottlandyardirl');
+  await admin.page.getByTestId('gm-login').click();
   check('Game Master dashboard opens', await hasText(admin.page, '+ New Game', 25000));
+  check('GM is shown by name', await hasText(admin.page, 'Dimitri Buryak', 15000));
   await admin.page.getByRole('button', { name: new RegExp(GAME) }).first().click();
   const approveBtn = admin.page.getByRole('button', { name: 'Approve', exact: true }).first();
   await approveBtn.waitFor({ timeout: 25000 }).catch(() => {});
@@ -521,13 +534,14 @@ try {
   // Game Master creates a game: 6-char code, remembered locally, no public index
   await admin.page.getByRole('button', { name: '+ New Game' }).click();
   await sleep(2500);
-  const known = await admin.page.evaluate(() => JSON.parse(localStorage.getItem('sy_admin_games') ?? '{}'));
+  const known = await admin.page.evaluate(() => JSON.parse(localStorage.getItem('sy_admin_games:dimitriburyak') ?? '{}'));
   const createdCode = Object.keys(known).find(c => c !== GAME);
   check('GM can create a game from the dashboard', !!createdCode, JSON.stringify(Object.keys(known)));
   if (createdCode) {
     check('game code is 6 characters', /^[A-Z0-9]{6}$/.test(createdCode), createdCode);
     const createdGame = await dbGet(`games/${createdCode}`);
     check('created game exists in the database', createdGame?.status === 'waiting');
+    check('created game records its Game Master', createdGame?.gm === 'dimitriburyak', String(createdGame?.gm));
     if (createdGame?.fugitiveCode) await dbDelete(`fugitiveCodes/${createdGame.fugitiveCode}`);
     await dbDelete(`games/${createdCode}`);
   }
