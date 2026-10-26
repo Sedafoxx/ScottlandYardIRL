@@ -24,6 +24,7 @@ import {
   signOutGm,
   gamesStorageKey,
   migrateLegacyGameList,
+  currentUid,
 } from '../utils/gmAuth';
 
 const TRANSPORT_MAP = Object.fromEntries(TRANSPORT_TYPES.map(t => [t.key, t]));
@@ -241,8 +242,8 @@ export default function AdminPage() {
 
   const knownGamesKey = gamesStorageKey(gm.username);
 
-  const signOut = () => {
-    signOutGm();
+  const signOut = async () => {
+    await signOutGm();
     window.location.reload();
   };
 
@@ -309,6 +310,11 @@ export default function AdminPage() {
       const val = snap.val();
       setActiveGame(val);
       activeGameRef.current = val;
+      // Games created before ownership existed have no gmUid: the GM who opens
+      // one adopts it (rules allow exactly that once, for GMs only).
+      if (val && !val.gmUid) {
+        set(ref(db, `games/${activeGameCode}/gmUid`), currentUid()).catch(() => {});
+      }
     });
     return () => unsub();
   }, [activeGameCode]);
@@ -322,6 +328,7 @@ export default function AdminPage() {
         createdAt: Date.now(),
         fugitiveCode: fugCode,
         gm: gm.username,
+        gmUid: currentUid(),
       }),
       set(ref(db, `fugitiveCodes/${fugCode}`), code),
     ]);

@@ -7,7 +7,7 @@
  *         APP_URL=http://localhost:5173 node test-zones-unit.mjs
  */
 import { chromium } from 'playwright';
-import { loadEnv, signInAnonymously } from './test-helpers.mjs';
+import { loadEnv, signInGmAccount } from './test-helpers.mjs';
 
 // ── env / REST helpers ───────────────────────────────────────────────────────
 const env = loadEnv();
@@ -16,8 +16,9 @@ const APP_URL = process.env.APP_URL || 'http://localhost:5173';
 const BUCKET = env.VITE_FIREBASE_STORAGE_BUCKET || '';
 if (!DB_URL) { console.error('VITE_FIREBASE_DATABASE_URL missing in .env'); process.exit(1); }
 
-const TOKEN = await signInAnonymously(env);
-const api = (path) => `${DB_URL}/${path}.json?auth=${TOKEN}`;
+// The harness creates/removes the game, so it needs the owning Game Master.
+const gm = await signInGmAccount(env);
+const api = (path) => `${DB_URL}/${path}.json?auth=${gm.token}`;
 const dbGet = async (path) => (await fetch(api(path))).json();
 const dbPut = async (path, body) => {
   const r = await fetch(api(path), { method: 'PUT', body: JSON.stringify(body) });
@@ -93,6 +94,8 @@ try {
   await dbPut(`games/${GAME}`, {
     status: 'active',
     createdAt: Date.now(),
+    gm: 'dimitriburyak',
+    gmUid: gm.uid,
     fugitive: { lastUpdate: { lat: FUG.lat, lng: FUG.lng, timestamp: Date.now() } },
     teams: {
       'Red 1': { score: 0, currentRiddle: 0, bigTeam: 'Red' },

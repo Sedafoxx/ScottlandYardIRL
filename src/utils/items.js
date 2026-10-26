@@ -1,5 +1,5 @@
 import { db } from '../firebase/config';
-import { ref, update, runTransaction, push } from 'firebase/database';
+import { ref, set, update, runTransaction, push } from 'firebase/database';
 import { POWER_UP_CONFIG } from '../data/powerUps';
 
 /**
@@ -60,20 +60,19 @@ export async function useItem({ gameCode, bigTeam, teamName, itemKey, teams = {}
       memberNames.forEach(name => { teamUpdates[`${name}/directionBeaconUntil`] = now + 2 * 60 * 1000; });
       break;
     case 'zone_freeze':
-      await update(ref(db, `games/${gameCode}`), { zoneFreezeUntil: now + 3 * 60 * 1000 });
+      // The game root is Game-Master-only; players write these specific nodes.
+      await set(ref(db, `games/${gameCode}/zoneFreezeUntil`), now + 3 * 60 * 1000);
       break;
     case 'selfie_demand':
-      await update(ref(db, `games/${gameCode}`), {
-        selfieRequest: {
-          requestId: now,
-          requestedBy: teamName,
-          requestedByBigTeam: bigTeam,
-          requestedAt: now,
-          status: 'pending',
-          photoUrl: null,
-          photoRef: null,
-          fulfilledAt: null,
-        },
+      await set(ref(db, `games/${gameCode}/selfieRequest`), {
+        requestId: now,
+        requestedBy: teamName,
+        requestedByBigTeam: bigTeam,
+        requestedAt: now,
+        status: 'pending',
+        photoUrl: null,
+        photoRef: null,
+        fulfilledAt: null,
       });
       break;
     case 'double_zone':

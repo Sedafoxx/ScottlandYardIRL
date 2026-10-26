@@ -31,16 +31,18 @@ let authReadyPromise = null;
 export function ensureAuth() {
   if (!authReadyPromise) {
     authReadyPromise = new Promise((resolve, reject) => {
+      // Firebase restores a persisted session asynchronously and emits `null`
+      // first when there is none. Only then do we create an anonymous user —
+      // never before, or a Game Master's session would be replaced on reload.
       const unsubscribe = onAuthStateChanged(
         auth,
         (user) => {
-          if (!user) return; // first callback can be null while restoring
           unsubscribe();
-          resolve(user);
+          if (user) { resolve(user); return; }
+          signInAnonymously(auth).then(resolve).catch(reject);
         },
         (err) => { unsubscribe(); reject(err); }
       );
-      signInAnonymously(auth).catch((err) => { unsubscribe(); reject(err); });
     });
   }
   return authReadyPromise;

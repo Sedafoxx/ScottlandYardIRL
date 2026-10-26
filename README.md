@@ -26,24 +26,42 @@ Routes:
 
 ## Game Master access
 
-`/admin` now requires **username + password** ([`gmAuth.js`](src/utils/gmAuth.js:1)), not a shared
-password. Sessions live in `sessionStorage` (per tab) with a visible **Sign out** button.
+`/admin` signs in against **real Firebase accounts** (Email/Password provider), one per Game
+Master ([`gmAuth.js`](src/utils/gmAuth.js:1)). The typed username maps to
+`<username>@scottlandyardirl.app`; the ID token carries a custom claim `gm: true`
+(set through the Identity Toolkit admin API, never from the browser).
 
-| Username | Owner |
-|---|---|
-| `dimitriburyak` | Dimitri Buryak |
-| `evasteinmetz` | Eva Steinmetz |
+| Username | Account email | Owner |
+|---|---|---|
+| `dimitriburyak` | dimitriburyak@scottlandyardirl.app | Dimitri Buryak |
+| `evasteinmetz` | evasteinmetz@scottlandyardirl.app | Eva Steinmetz |
 
-Credentials are stored as SHA-256 hashes (`username:password:syirl-gm-v1`) — add a GM by adding
-one hash entry. Each GM gets **their own game list** (`sy_admin_games:<username>` in
-`localStorage`); games created from the dashboard also record `gm` in the database, so a code
-opened on another device/account shows whose game it is. The old single-password list is
-migrated into the first account that signs in.
+### What is enforced server-side
 
-> This is a client-side gate: it keeps players out of the dashboard and separates GM game
-> lists, but the database can only see *an anonymous signed-in device*. Real per-GM
-> authorisation would need Firebase Auth with the Email/Password provider plus a custom
-> `gm` claim — the anonymous-only setup cannot express it.
+Rules use `auth.token.gm` plus the game's `gmUid`, so the browser cannot fake it:
+
+```json
+"$gameCode": { ".write": "auth.token.gm == true && (!data.exists() || data.child('gmUid').val() === auth.uid)" }
+```
+
+- **Only a Game Master can create a game**, and only the owning GM can **change its status,
+  end it or delete it**. A signed-in *player* gets 401 on all of those, and so does the other
+  GM on a foreign game.
+- Everything players legitimately write has its own grant below the game root
+  (`teams`, `fugitive`, `zones`, `teamItems`, `riddleSets`, `messages`, `photos`,
+  `selfieRequest`, `zoneFreezeUntil`, `powerUp`), so gameplay never needs admin rights.
+- Games created before ownership existed can be **adopted** by the first GM who opens them
+  (a one-time `gmUid` write that only a GM may perform).
+- Each GM still has their own dashboard list (`sy_admin_games:<username>`), and games record
+  `gm`/`gmUid` so a code opened on another device shows whose game it is.
+
+### What is *not* server-enforced
+
+Actions that edit player-owned data — approving a photo, awarding points, forcing a zone
+radius, correcting a score — write into the same paths players write to, so the database
+cannot tell GM from player there. The dashboard is behind a real authenticated GM session,
+but a determined player with devtools could still craft those specific writes. Closing that
+would mean moving every admin-managed field into an admin-only subtree.
 
 ## How the game model works
 

@@ -14,7 +14,7 @@
  */
 import fs from 'node:fs';
 import { chromium } from 'playwright';
-import { loadEnv, signInAnonymously } from './test-helpers.mjs';
+import { loadEnv, signInAnonymously, signInGmAccount } from './test-helpers.mjs';
 
 // ── env / REST ───────────────────────────────────────────────────────────────
 const env = loadEnv();
@@ -23,8 +23,13 @@ const BUCKET = (env.VITE_FIREBASE_STORAGE_BUCKET || '').replace(/\/$/, '');
 const APP_URL = process.env.APP_URL || 'http://localhost:5173';
 if (!DB_URL) { console.error('VITE_FIREBASE_DATABASE_URL missing in .env'); process.exit(1); }
 
-const TOKEN = await signInAnonymously(env);
+// Game setup/teardown requires the owning Game Master; player-level checks use
+// a separate anonymous identity.
+const gm = await signInGmAccount(env);
+const anonToken = await signInAnonymously(env);
+const TOKEN = gm.token;
 const api = (p) => `${DB_URL}/${p}.json?auth=${TOKEN}`;
+const anonApi = (p) => `${DB_URL}/${p}.json?auth=${anonToken}`;
 const unauthApi = (p) => `${DB_URL}/${p}.json`;
 const dbGet = async (p) => (await fetch(api(p))).json();
 const dbPut = async (p, body) => {
@@ -105,6 +110,8 @@ await dbPut(`games/${GAME}`, {
   status: 'active',
   createdAt: Date.now(),
   winner: null,
+  gm: 'dimitriburyak',
+  gmUid: gm.uid,
   fugitive: { lastUpdate: { lat: FUGITIVE_POS.latitude, lng: FUGITIVE_POS.longitude, timestamp: Date.now() } },
   teams: {
     'Red 1':  { score: 0, currentRiddle: 0, bigTeam: 'Red' },
@@ -531,6 +538,11 @@ try {
 
   await mx.screenshot({ path: 'verify-screenshots/e2e-misterx.png' });
 
+  // ownership is enforced server-side, not just in the dashboard
+  const playerDelete = await fetch(anonApi(`games/${GAME}`), { method: 'DELETE' });
+  check('a signed-in player cannot delete a game', playerDelete.status === 401, `status=${playerDelete.status}`);
+  check('the game is still there afterwards', (await dbGet(`games/${GAME}`))?.status === 'active');
+
   // Game Master creates a game: 6-char code, remembered locally, no public index
   await admin.page.getByRole('button', { name: '+ New Game' }).click();
   await sleep(2500);
@@ -542,6 +554,7 @@ try {
     const createdGame = await dbGet(`games/${createdCode}`);
     check('created game exists in the database', createdGame?.status === 'waiting');
     check('created game records its Game Master', createdGame?.gm === 'dimitriburyak', String(createdGame?.gm));
+    check('created game records its owner uid', createdGame?.gmUid === gm.uid, String(createdGame?.gmUid));
     if (createdGame?.fugitiveCode) await dbDelete(`fugitiveCodes/${createdGame.fugitiveCode}`);
     await dbDelete(`games/${createdCode}`);
   }

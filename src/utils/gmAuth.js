@@ -1,39 +1,25 @@
+import { auth } from '../firebase/config';
+import { signInWithEmailAndPassword, signOut, signInAnonymously } from 'firebase/auth';
+
 /**
- * Game Master access.
+ * Game Master access — real Firebase accounts this time.
  *
- * This is a client-side gate (the bundle ships password hashes, not passwords),
- * not a server-side identity — the Realtime Database still only knows that a
- * device is an anonymous signed-in user. It keeps other players out of /admin
- * and gives each GM their own game list.
+ * Each GM has an Email/Password account (`<username>@scottlandyardirl.app`) with a
+ * custom claim `gm: true`, granted only through the admin API. The database rules
+ * use that claim (plus `gmUid` stored on the game) to decide who may create,
+ * end or delete a game — the browser cannot fake it.
  *
- * Hashes are SHA-256 of `username:password:syirl-gm-v1`.
+ * The username the GM types is mapped to that email address; the password is the
+ * account password.
  */
 
-const SALT = 'syirl-gm-v1';
+const EMAIL_DOMAIN = 'scottlandyardirl.app';
 const SESSION_KEY = 'sy_gm_session';
 
-const GM_USERS = {
-  dimitriburyak: {
-    hash: '5711d63e35edfa4d12dcc43ba54d4d8ef2d60d09fb02e472396c6868f36bb4ad',
-    name: 'Dimitri Buryak',
-  },
-  evasteinmetz: {
-    hash: 'a65ab17af89ffb53a258c0a2222519b486c2a4e2943bb4b81408dedc4d567401',
-    name: 'Eva Steinmetz',
-  },
+const GM_NAMES = {
+  dimitriburyak: 'Dimitri Buryak',
+  evasteinmetz: 'Eva Steinmetz',
 };
-
-function timingSafeEqual(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-async function sha256Hex(text) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
 
 /** Signed-in GM for this tab, or null. */
 export function readGmSession() {
@@ -41,34 +27,61 @@ export function readGmSession() {
     const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    const user = GM_USERS[parsed?.username];
-    return user ? { username: parsed.username, name: user.name } : null;
+    if (!parsed?.username || !parsed?.uid) return null;
+    return { username: parsed.username, name: parsed.name ?? GM_NAMES[parsed.username] ?? parsed.username, uid: parsed.uid };
   } catch {
     return null;
   }
 }
 
-export function signOutGm() {
-  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+export function currentUid() {
+  return auth.currentUser?.uid ?? null;
 }
 
-/** Verify credentials and start a session for this tab. */
+const WRONG_CREDENTIALS = /invalid-credential|wrong-password|user-not-found|invalid-login-credentials|invalid-email/i;
+
+/** Sign in with a GM account and verify the gm claim. */
 export async function signInGm(usernameInput, passwordInput) {
   const username = String(usernameInput ?? '').trim().toLowerCase();
   const password = String(passwordInput ?? '');
-  const user = GM_USERS[username];
+  if (!username || !password) return { ok: false, error: 'Enter your username and password.' };
 
-  // Hash even for unknown users so the timing does not reveal valid usernames.
-  const hash = await sha256Hex(`${username}:${password}:${SALT}`);
-  const expected = user?.hash ?? '0'.repeat(64);
+  const email = `${username}@${EMAIL_DOMAIN}`;
+  try {
+    const credential = await signInWithEmailAndPassword(auth, email, password);
+    const token = await credential.user.getIdTokenResult(true);
 
-  if (!user || !timingSafeEqual(hash, expected)) {
-    return { ok: false, error: 'Wrong username or password.' };
+    if (token.claims.gm !== true) {
+      // Valid account, but not a Game Master — leave the device signed in as a player.
+      await signOut(auth);
+      await signInAnonymously(auth);
+      return { ok: false, error: 'This account is not a Game Master.' };
+    }
+
+    const session = {
+      username,
+      name: credential.user.displayName || GM_NAMES[username] || username,
+      uid: credential.user.uid,
+    };
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch { /* private mode */ }
+    return { ok: true, session };
+  } catch (err) {
+    const code = err?.code ?? '';
+    if (WRONG_CREDENTIALS.test(code)) return { ok: false, error: 'Wrong username or password.' };
+    if (/too-many-requests/.test(code)) return { ok: false, error: 'Too many attempts — wait a minute and try again.' };
+    return { ok: false, error: `Sign-in failed (${code || 'unknown error'}).` };
   }
+}
 
-  const session = { username, name: user.name, since: Date.now() };
-  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch { /* ignore */ }
-  return { ok: true, session: { username, name: user.name } };
+/** End the GM session and leave the device authenticated as a player. */
+export async function signOutGm() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+  try {
+    await signOut(auth);
+    await signInAnonymously(auth); // player pages still need an authenticated device
+  } catch (err) {
+    console.warn('[gmAuth] sign-out fallback failed', err?.code ?? err);
+  }
 }
 
 /** localStorage key for a GM's own game list. */

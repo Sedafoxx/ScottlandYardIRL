@@ -6,22 +6,20 @@
     "games": {
       "$gameCode": {
         ".read": "auth != null",
-        ".write": "auth != null",
+
+        ".write": "auth.token.gm == true && (!data.exists() || data.child('gmUid').val() === auth.uid)",
 
         "status": {
           ".validate": "newData.isString() && (newData.val() === 'waiting' || newData.val() === 'active' || newData.val() === 'ended')"
         },
 
-        "fugitive": {
-          "lastUpdate": {
-            ".validate": "newData.hasChildren(['lat','lng','timestamp']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lng').isNumber() && newData.child('lng').val() >= -180 && newData.child('lng').val() <= 180 && newData.child('timestamp').isNumber()"
-          },
-          "undercover": {
-            ".validate": "newData.hasChildren(['usedAt','until']) && newData.child('usedAt').isNumber() && newData.child('until').isNumber()"
-          }
+        "gmUid": {
+          ".write": "auth.token.gm == true && !data.exists()",
+          ".validate": "newData.val() === auth.uid"
         },
 
         "teams": {
+          ".write": "auth != null",
           "$teamName": {
             "score": {
               ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000"
@@ -35,22 +33,54 @@
           }
         },
 
+        "fugitive": {
+          ".write": "auth != null",
+          "lastUpdate": {
+            ".validate": "newData.hasChildren(['lat','lng','timestamp']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lng').isNumber() && newData.child('lng').val() >= -180 && newData.child('lng').val() <= 180 && newData.child('timestamp').isNumber()"
+          },
+          "undercover": {
+            ".validate": "newData.hasChildren(['usedAt','until']) && newData.child('usedAt').isNumber() && newData.child('until').isNumber()"
+          }
+        },
+
         "zones": {
+          ".write": "auth != null",
           "$bigTeam": {
             ".validate": "newData.hasChildren(['lat','lng','radius']) && newData.child('lat').isNumber() && newData.child('lng').isNumber() && newData.child('radius').isNumber() && newData.child('radius').val() >= 30 && newData.child('radius').val() <= 2000"
           }
         },
 
         "teamItems": {
+          ".write": "auth != null",
           "$bigTeam": {
-            ".write": true,
             "$itemKey": {
               ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 99"
             }
           }
         },
 
+        "riddleSets": {
+          ".write": "auth != null"
+        },
+
+        "stars": {
+          ".write": "auth != null"
+        },
+
+        "selfieRequest": {
+          ".write": "auth != null"
+        },
+
+        "zoneFreezeUntil": {
+          ".write": "auth != null"
+        },
+
+        "powerUp": {
+          ".write": "auth != null"
+        },
+
         "messages": {
+          ".write": "auth != null",
           "global": {
             "$msgId": {
               ".validate": "newData.hasChildren(['text','timestamp']) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 500 && newData.child('timestamp').isNumber()"

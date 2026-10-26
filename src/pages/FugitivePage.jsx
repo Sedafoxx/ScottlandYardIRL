@@ -125,16 +125,15 @@ export default function FugitivePage() {
       // all live in photoStore so every photo in the game behaves the same.
       const { photoUrl, photoRef, photoEnc } = await savePhoto({ file, gameCode, teamName: '_misterx', label: 'selfie' });
       const request = gameDataRef.current?.selfieRequest ?? {};
-      await update(ref(db, `games/${gameCode}`), {
-        selfieRequest: {
-          ...request,
-          photoUrl,
-          photoRef,
-          photoEnc,
-          gameCode,
-          status: 'fulfilled',
-          fulfilledAt: Date.now(),
-        },
+      // Write the request node itself — the game root is Game-Master-only now.
+      await set(ref(db, `games/${gameCode}/selfieRequest`), {
+        ...request,
+        photoUrl,
+        photoRef,
+        photoEnc,
+        gameCode,
+        status: 'fulfilled',
+        fulfilledAt: Date.now(),
       });
     } catch {
       setSelfieError('Upload failed. Try again.');
